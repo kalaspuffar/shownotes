@@ -16,6 +16,10 @@ const state = {
     config:  null,
 };
 
+// Tracks which section a drag originated from so dragover can reject
+// cross-section drops before the drop event fires.
+let dragSourceSection = null;
+
 /* ----------------------------------------------------------
    10.2 — apiCall(action, payload)
    Single AJAX boundary for all server communication.
@@ -159,12 +163,14 @@ function renderItem(item, section) {
 
     // Drag events
     row.addEventListener('dragstart', (e) => {
+        dragSourceSection = section; // captured at module scope for dragover guards
         e.dataTransfer.setData('text/plain', String(item.id));
         e.dataTransfer.effectAllowed = 'move';
         row.classList.add('dragging');
     });
     row.addEventListener('dragend', () => {
         row.classList.remove('dragging');
+        dragSourceSection = null;
     });
 
     const fieldsEl = document.createElement('div');
@@ -236,7 +242,9 @@ function buildItemField(item, key, label, section) {
 function startInlineEdit(valueEl, item, key, section) {
     if (valueEl.querySelector('input')) return; // already editing
 
-    const originalValue = item[key] || '';
+    const originalValue     = item[key]       || '';
+    // Capture original author_url so we detect suggestion-only URL changes (Issue 1 fix)
+    const originalAuthorUrl = item.author_url || '';
 
     const input = document.createElement('input');
     input.type = 'text';
@@ -254,11 +262,15 @@ function startInlineEdit(valueEl, item, key, section) {
     // running after an explicit cancellation.
     let cancelled = false;
 
-    const saveEdit = createDebounce(async () => {
+    // Inner save function — called directly for an immediate save (e.g. after
+    // selecting an author suggestion) or via the debounced wrapper for blur/Enter.
+    async function doSave() {
         if (cancelled) return;
 
         const newValue = input.value.trim();
-        if (newValue === originalValue && item.author_url === (item._pendingAuthorUrl ?? item.author_url)) {
+        // No-op if neither the display value nor the author_url changed (Issue 1 fix:
+        // compare against the captured original rather than a phantom _pendingAuthorUrl)
+        if (newValue === originalValue && item.author_url === originalAuthorUrl) {
             restoreValue();
             return;
         }
@@ -276,7 +288,10 @@ function startInlineEdit(valueEl, item, key, section) {
             // Toast already shown by apiCall; restore original
             restoreValue();
         }
-    }, 800);
+    }
+
+    // Debounced wrapper used by blur and keyboard Enter
+    const saveEdit = createDebounce(doSave, 800);
 
     function restoreValue() {
         valueEl.textContent = originalValue;
@@ -295,9 +310,11 @@ function startInlineEdit(valueEl, item, key, section) {
         }
     });
 
-    // Attach author suggestion dropdown for News author_name field
+    // Attach author suggestion dropdown for News author_name field.
+    // Pass doSave (not the debounced wrapper) so selecting a suggestion
+    // triggers an immediate save without the 800 ms delay (Issue 2 fix).
     if (key === 'author_name' && section === 'news') {
-        attachAuthorSuggestions(input, item, valueEl, saveEdit);
+        attachAuthorSuggestions(input, item, valueEl, doSave);
     }
 }
 
@@ -568,11 +585,14 @@ function closeSuggestionDropdown(dropdownEl) {
 /*
  * Attaches author suggestion dropdown behaviour to an inline-edit input.
  * Used for the author_name field of News item rows.
- * When a suggestion is selected, also patches author_url on the item and in the DOM.
+ * When a suggestion is selected, also patches author_url on the item and in the DOM,
+ * then calls immediateSave() so the update is persisted without waiting for blur.
  */
-function attachAuthorSuggestions(inputEl, item, valueEl, saveEdit) {
+function attachAuthorSuggestions(inputEl, item, valueEl, immediateSave) {
     const domain = extractDomain(item.url);
     let dropdown = null;
+    // Sequence counter ensures only the latest in-flight suggestion fetch is applied (Issue 5 fix)
+    let requestSeq = 0;
 
     function onSelect(author) {
         inputEl.value = author.author_name;
@@ -588,11 +608,18 @@ function attachAuthorSuggestions(inputEl, item, valueEl, saveEdit) {
 
         closeSuggestionDropdown(dropdown);
         dropdown = null;
+
+        // Trigger an immediate save so the changed URL is not lost if the user
+        // selects a suggestion whose display name matches the current value (Issue 2 fix)
+        immediateSave();
     }
 
     async function fetchAndRenderSuggestions(query) {
+        const seq = ++requestSeq;
         try {
             const data = await apiCall('get_author_suggestions', { domain, query });
+            // Discard stale responses from earlier requests (Issue 5 fix)
+            if (seq !== requestSeq) return;
             closeSuggestionDropdown(dropdown);
             dropdown = renderSuggestionDropdown(
                 inputEl,
@@ -627,6 +654,8 @@ function bindAuthorSuggestionsForAddPanel() {
     const addUrlInput     = document.getElementById('add-url');
 
     let dropdown = null;
+    // Sequence counter to discard stale responses when the user types quickly (Issue 5 fix)
+    let requestSeq = 0;
 
     function currentDomain() {
         return extractDomain(addUrlInput.value);
@@ -640,11 +669,14 @@ function bindAuthorSuggestionsForAddPanel() {
     }
 
     async function fetchAndRenderSuggestions(query) {
+        const seq = ++requestSeq;
         try {
             const data = await apiCall('get_author_suggestions', {
                 domain: currentDomain(),
                 query,
             });
+            // Discard stale responses (Issue 5 fix)
+            if (seq !== requestSeq) return;
             closeSuggestionDropdown(dropdown);
             dropdown = renderSuggestionDropdown(
                 authorNameInput,
@@ -696,6 +728,10 @@ function bindDragAndDrop(containerId, section) {
     }
 
     container.addEventListener('dragover', (e) => {
+        // Reject cross-section drags at the dragover stage so the browser shows
+        // a "no-drop" cursor instead of misleadingly accepting the gesture (Issue 3 fix)
+        if (dragSourceSection !== null && dragSourceSection !== section) return;
+
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
 
@@ -787,6 +823,7 @@ function bindGenerateButton() {
     btn.addEventListener('click', async () => {
         btn.disabled = true;
         btn.textContent = 'Generating…';
+        btn.classList.add('loading'); // mirrors Fetch button loading pattern (Issue 6 fix)
 
         try {
             const data = await apiCall('generate_markdown');
@@ -804,21 +841,50 @@ function bindGenerateButton() {
         } finally {
             btn.disabled = false;
             btn.textContent = 'Generate Show Notes';
+            btn.classList.remove('loading');
         }
     });
 }
 
 /* ----------------------------------------------------------
-   Copy to Clipboard button
+   Copy to Clipboard — tries the modern Clipboard API first,
+   falls back to the legacy execCommand approach for HTTP
+   deployments where navigator.clipboard is unavailable.
    ---------------------------------------------------------- */
+async function copyTextToClipboard(text) {
+    // Modern API — only available in secure contexts (HTTPS or localhost)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            // Fall through to the legacy path
+        }
+    }
+
+    // Legacy fallback: create a temporary off-screen textarea, select all,
+    // then use the deprecated execCommand so it works on plain HTTP origins.
+    const temp = document.createElement('textarea');
+    temp.value = text;
+    temp.setAttribute('readonly', '');
+    temp.style.cssText = 'position:absolute;left:-9999px;top:-9999px';
+    document.body.appendChild(temp);
+    temp.select();
+    try {
+        return document.execCommand('copy');
+    } finally {
+        temp.remove();
+    }
+}
+
 function bindCopyButton() {
     const btn      = document.getElementById('btn-copy');
     const textarea = document.getElementById('output-markdown');
 
     btn.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(textarea.value);
+        const success = await copyTextToClipboard(textarea.value);
 
+        if (success) {
             btn.textContent = '✓ Copied!';
             btn.classList.add('copied');
 
@@ -826,7 +892,7 @@ function bindCopyButton() {
                 btn.textContent = '📋 Copy to Clipboard';
                 btn.classList.remove('copied');
             }, 2000);
-        } catch {
+        } else {
             showToast('error', 'Could not copy to clipboard — please copy the text manually.');
         }
     });

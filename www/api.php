@@ -35,7 +35,7 @@ $action = $body['action'] ?? '';
 try {
     $response = match ($action) {
         'update_episode'        => handleUpdateEpisode($body, $db),
-        'scrape_url'            => handleScrapeUrl($body, $scraper),
+        'scrape_url'            => handleScrapeUrl($body, $scraper, $db),
         'add_item'              => handleAddItem($body, $db),
         'update_item'           => handleUpdateItem($body, $db),
         'delete_item'           => handleDeleteItem($body, $db),
@@ -95,7 +95,7 @@ function handleUpdateEpisode(array $body, Database $db): array
     return jsonSuccess(['episode' => $episode]);
 }
 
-function handleScrapeUrl(array $body, Scraper $scraper): array
+function handleScrapeUrl(array $body, Scraper $scraper, Database $db): array
 {
     $url = $body['url'] ?? '';
 
@@ -110,6 +110,15 @@ function handleScrapeUrl(array $body, Scraper $scraper): array
     // by Scraper in both of these cases, making the distinction unambiguous.
     if ($result['fetch_failed']) {
         return jsonError($result['error']);
+    }
+
+    // Enrich: if the page metadata gave us an author name but no profile URL,
+    // look the URL up from our history so the user doesn't have to type it in.
+    if ($result['author_name'] !== '' && $result['author_url'] === '' && $result['domain'] !== '') {
+        $storedUrl = $db->getAuthorUrl($result['domain'], $result['author_name']);
+        if ($storedUrl !== '') {
+            $result['author_url'] = $storedUrl;
+        }
     }
 
     return jsonSuccess([
