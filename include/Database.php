@@ -346,6 +346,10 @@ class Database
     /**
      * Returns domain-specific authors first, then others, filtered by an optional query string.
      *
+     * Results are deduplicated by author_name: when the same name has been saved with
+     * different URLs (e.g. once with a profile link, once without), the row with the
+     * non-empty URL is preferred and use_counts are summed.
+     *
      * @return array{domain_authors: list<array>, other_authors: list<array>}
      */
     public function getAuthorSuggestions(string $domain, string $query): array
@@ -358,20 +362,31 @@ class Database
             $likeClause = 'AND author_name LIKE :like';
         }
 
+        // GROUP BY author_name so duplicate entries (same name, different URLs) are
+        // collapsed into one row.  COALESCE(MAX(CASE … END), '') picks the non-empty
+        // URL when one exists; SUM(use_count) accumulates usage across all variants.
         $domainStmt = $this->pdo->prepare(
-            "SELECT author_name, author_url, use_count
+            "SELECT
+                 author_name,
+                 COALESCE(MAX(CASE WHEN author_url != '' THEN author_url ELSE NULL END), '') AS author_url,
+                 SUM(use_count) AS use_count
              FROM author_history
              WHERE domain = :domain $likeClause
-             ORDER BY use_count DESC, last_used_at DESC
+             GROUP BY author_name
+             ORDER BY SUM(use_count) DESC, MAX(last_used_at) DESC
              LIMIT 10"
         );
         $domainStmt->execute($params);
 
         $otherStmt = $this->pdo->prepare(
-            "SELECT author_name, author_url, use_count
+            "SELECT
+                 author_name,
+                 COALESCE(MAX(CASE WHEN author_url != '' THEN author_url ELSE NULL END), '') AS author_url,
+                 SUM(use_count) AS use_count
              FROM author_history
              WHERE domain != :domain $likeClause
-             ORDER BY use_count DESC, last_used_at DESC
+             GROUP BY author_name
+             ORDER BY SUM(use_count) DESC, MAX(last_used_at) DESC
              LIMIT 5"
         );
         $otherStmt->execute($params);
@@ -380,5 +395,30 @@ class Database
             'domain_authors' => $domainStmt->fetchAll(),
             'other_authors'  => $otherStmt->fetchAll(),
         ];
+    }
+
+    /**
+     * Looks up the best known profile URL for a given author name on a domain.
+     *
+     * Used to enrich scrape results when the page provides a name but no URL:
+     * if the author has been seen before with a URL, that URL is returned so
+     * the user does not have to enter it manually.
+     *
+     * Returns an empty string when no matching record with a non-empty URL exists.
+     */
+    public function getAuthorUrl(string $domain, string $authorName): string
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT author_url
+             FROM author_history
+             WHERE domain = :domain
+               AND author_name = :author_name
+               AND author_url != ''
+             ORDER BY use_count DESC, last_used_at DESC
+             LIMIT 1"
+        );
+        $stmt->execute([':domain' => $domain, ':author_name' => $authorName]);
+
+        return $stmt->fetchColumn() ?: '';
     }
 }

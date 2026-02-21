@@ -512,3 +512,116 @@ input:hover,
 select:hover {
     border-color: var(--color-primary);
 }
+
+/* ============================================================
+   Drag Handle
+   ============================================================ */
+.drag-handle {
+    cursor: grab;
+    color: var(--color-drag-handle);
+    user-select: none;
+    padding: 0 4px;
+    font-size: 1rem;
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: 2px;
+    line-height: 1.5;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+/* ============================================================
+   Drag-and-Drop States
+   ============================================================ */
+.item-row.dragging {
+    opacity: 0.4;
+}
+
+.drop-indicator {
+    height: 2px;
+    background: var(--color-drag-over);
+    margin: 2px 0;
+    border-radius: 1px;
+    pointer-events: none;
+}
+
+/* ============================================================
+   Author Suggestion Dropdown
+   ============================================================ */
+ul.author-suggest-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.suggest-item {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.suggest-item:hover,
+.suggest-item:focus {
+    background: rgba(74, 124, 89, 0.12);
+    outline: none;
+}
+
+.suggest-group-label {
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    pointer-events: none;
+}
+
+.suggest-divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: 4px 0;
+    pointer-events: none;
+}
+
+/* ============================================================
+   Output Panel — hidden/visible state and textarea
+   ============================================================ */
+
+/* Explicit rule ensures [hidden] attribute wins even if other
+   display rules would otherwise override it. */
+#output-panel[hidden] {
+    display: none;
+}
+
+#output-markdown {
+    width: 100%;
+    box-sizing: border-box;
+    height: 280px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing-sm);
+    resize: vertical;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+}
+
+#btn-copy.copied {
+    background-color: var(--color-primary);
+    color: #fff;
+}
