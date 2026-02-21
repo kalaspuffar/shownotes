@@ -1,0 +1,13 @@
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "no-referrer"
+</IfModule>
+
+# Prevent directory listing
+Options -Indexes
+
+# Deny access to hidden files (dot-files like .htaccess itself)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
