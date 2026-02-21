@@ -1,1 +1,514 @@
-/* Cozy News Corner — stylesheet (Phase 3 will fill this in) */
+/* ============================================================
+   CSS Custom Properties
+   ============================================================ */
+:root {
+    --color-bg:           #f5f5f0;
+    --color-surface:      #ffffff;
+    --color-border:       #d0cec8;
+    --color-primary:      #4a7c59;
+    --color-primary-dark: #3a6148;
+    --color-danger:       #c0392b;
+    --color-text:         #2c2c2c;
+    --color-text-muted:   #6b6b6b;
+    --color-drag-handle:  #b0aca6;
+    --color-drag-over:    #4a7c59;
+    --radius:             6px;
+    --spacing-sm:         8px;
+    --spacing-md:         16px;
+    --spacing-lg:         24px;
+    --font-mono:          'Courier New', Courier, monospace;
+    --font-sans:          system-ui, -apple-system, sans-serif;
+}
+
+/* ============================================================
+   Global Reset & Base Styles
+   ============================================================ */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.5;
+}
+
+h1, h2, h3 {
+    margin: 0 0 var(--spacing-sm);
+}
+
+/* ============================================================
+   Header & Episode Meta Bar
+   ============================================================ */
+header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    background-color: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+header h1 {
+    font-size: 1.1rem;
+    margin: 0;
+    white-space: nowrap;
+}
+
+#status-indicator {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    margin-left: auto;
+}
+
+#episode-meta {
+    background-color: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.episode-meta-fields {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.episode-meta-fields label {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.episode-meta-fields input {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 4px var(--spacing-sm);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    color: var(--color-text);
+    background-color: var(--color-surface);
+}
+
+#ep-week,
+#ep-year {
+    width: 80px;
+}
+
+#ep-youtube {
+    width: 320px;
+    max-width: 100%;
+}
+
+/* ============================================================
+   Two-Column CSS Grid Workspace
+   ============================================================ */
+#workspace {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
+    align-items: start;
+}
+
+/* ============================================================
+   Add Item Panel
+   ============================================================ */
+#add-item-panel {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+#add-item-panel h2 {
+    font-size: 0.95rem;
+    margin: 0 0 var(--spacing-sm);
+    color: var(--color-text);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.form-group label {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.form-group input,
+.form-group select {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 6px var(--spacing-sm);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    color: var(--color-text);
+    background-color: var(--color-surface);
+    width: 100%;
+}
+
+#add-item-panel button {
+    padding: 7px var(--spacing-md);
+    border: none;
+    border-radius: var(--radius);
+    background-color: var(--color-primary);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+#add-item-panel button:hover:not(:disabled) {
+    background-color: var(--color-primary-dark);
+}
+
+#add-item-panel button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#btn-fetch.loading {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+#scraped-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+}
+
+/* ============================================================
+   Section Headings & Item Lists
+   ============================================================ */
+#item-lists {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+#vulnerability-list,
+#news-list {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing-md);
+}
+
+#vulnerability-list h2,
+#news-list h2 {
+    font-size: 1rem;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+/* ============================================================
+   Item Rows
+   ============================================================ */
+.item-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) 0;
+    border-bottom: 1px solid var(--color-border);
+    position: relative;
+}
+
+.item-row:last-child {
+    border-bottom: none;
+}
+
+.item-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.item-field {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: baseline;
+    font-size: 0.9rem;
+    cursor: text;
+}
+
+.item-field-label {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    min-width: 70px;
+}
+
+.item-field-value {
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.item-row:hover .item-field {
+    cursor: text;
+}
+
+.item-field:hover .item-field-value {
+    text-decoration: underline dotted;
+}
+
+.item-delete {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--color-danger);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 2px 4px;
+    border-radius: var(--radius);
+    opacity: 0;
+    transition: opacity 0.1s;
+    align-self: flex-start;
+}
+
+.item-row:hover .item-delete {
+    opacity: 1;
+}
+
+/* ============================================================
+   Inline Edit Inputs
+   ============================================================ */
+.item-field input.inline-edit {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--color-primary);
+    border-radius: var(--radius);
+    padding: 2px 6px;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    color: var(--color-text);
+    background-color: var(--color-surface);
+    /* outline: none removed — the global :focus-visible outline must remain
+       for WCAG AA compliance. The primary-coloured border already signals
+       edit mode; the focus outline adds the required accessible indicator. */
+}
+
+/* ============================================================
+   Action Bar (Generate button row above output panel)
+   ============================================================ */
+#action-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    background-color: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+}
+
+#btn-generate {
+    padding: 8px var(--spacing-lg);
+    border: none;
+    border-radius: var(--radius);
+    background-color: var(--color-primary);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+#btn-generate:hover:not(:disabled) {
+    background-color: var(--color-primary-dark);
+}
+
+#btn-generate:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ============================================================
+   Screen-reader-only utility (visually hidden, accessible)
+   ============================================================ */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ============================================================
+   Output Panel
+   ============================================================ */
+#output-panel {
+    margin: 0 var(--spacing-lg) var(--spacing-lg);
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing-md);
+}
+
+#output-panel h2 {
+    font-size: 1rem;
+    margin-bottom: var(--spacing-sm);
+}
+
+#output-markdown {
+    width: 100%;
+    box-sizing: border-box;
+    height: 280px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing-sm);
+    resize: vertical;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+}
+
+#btn-copy {
+    margin-top: var(--spacing-sm);
+    padding: 7px var(--spacing-md);
+    border: none;
+    border-radius: var(--radius);
+    background-color: var(--color-primary);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+#btn-copy:hover {
+    background-color: var(--color-primary-dark);
+}
+
+#btn-copy.copied {
+    background-color: var(--color-primary-dark);
+}
+
+/* ============================================================
+   Toast Notifications
+   ============================================================ */
+#toast-container {
+    position: fixed;
+    bottom: var(--spacing-lg);
+    right: var(--spacing-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.toast {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    max-width: 320px;
+    pointer-events: auto;
+    animation: toast-in 0.2s ease;
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.toast.error {
+    background-color: var(--color-danger);
+}
+
+.toast.success {
+    background-color: var(--color-primary);
+}
+
+.toast.warning {
+    background-color: #c07a2b;
+}
+
+/* ============================================================
+   Footer
+   ============================================================ */
+footer {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    background-color: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+#btn-new-episode {
+    padding: 7px var(--spacing-md);
+    border: 1px solid var(--color-danger);
+    border-radius: var(--radius);
+    background-color: transparent;
+    color: var(--color-danger);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+#btn-new-episode:hover {
+    background-color: var(--color-danger);
+    color: #fff;
+}
+
+#footer-status {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+/* ============================================================
+   Unsaved State — Episode Meta Fields
+   Applied by JS while a debounced save is in flight.
+   ============================================================ */
+input.unsaved {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(74, 124, 89, 0.2);
+}
+
+/* ============================================================
+   Focus & Hover States (Accessibility)
+   ============================================================ */
+:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+input:hover,
+select:hover {
+    border-color: var(--color-primary);
+}

@@ -264,7 +264,7 @@ function handleGenerateMarkdown(Database $db, array $config): array
 {
     $episode   = $db->getEpisode();
     $items     = $db->getItems();
-    $generator = new Generator();
+    $generator = new MarkdownGenerator();
     $markdown  = $generator->generate($episode, $items, $config);
 
     $data = ['markdown' => $markdown];
