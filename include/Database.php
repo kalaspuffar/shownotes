@@ -18,6 +18,14 @@ class Database
     {
         $config = require __DIR__ . '/../etc/config.php';
 
+        // Fail early with a clear message rather than a cryptic PDOException.
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            throw new \RuntimeException(
+                'The pdo_sqlite PHP extension is not installed. '
+                . 'Install it with: sudo apt install php8.4-sqlite3'
+            );
+        }
+
         $this->pdo = new PDO('sqlite:' . $config['db_path'], options: [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -108,13 +116,18 @@ class Database
     // Read methods (used by index.php to build INITIAL_STATE)
     // -------------------------------------------------------------------------
 
-    /** Returns the single episode row. */
+    /** Returns the single episode row, falling back to safe defaults if the seed failed. */
     public function getEpisode(): array
     {
         $stmt = $this->pdo->prepare('SELECT * FROM episodes WHERE id = 1');
         $stmt->execute();
 
-        return $stmt->fetch();
+        return $stmt->fetch() ?: [
+            'id'          => 1,
+            'week_number' => idate('W'),
+            'year'        => (int) date('Y'),
+            'youtube_url' => '',
+        ];
     }
 
     /**
@@ -136,5 +149,65 @@ class Database
         }
 
         return $groups;
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 2 stubs — implemented in feature/backend-core
+    // -------------------------------------------------------------------------
+
+    /** Updates episode metadata (week, year, YouTube URL); returns the updated row. */
+    public function updateEpisode(int $week, int $year, string $youtubeUrl): array
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /** Inserts a new item; assigns the next sort_order within the section; returns the new row. */
+    public function addItem(string $section, string $url, string $title, string $authorName, string $authorUrl): array
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /** Updates editable fields on an existing item; returns the updated row. */
+    public function updateItem(int $id, string $url, string $title, string $authorName, string $authorUrl): array
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /** Deletes an item and resequences sort_order within its section. */
+    public function deleteItem(int $id): bool
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /**
+     * Sets sort_order to array index for each ID in the provided order.
+     *
+     * @param list<int> $orderedIds
+     */
+    public function reorderItems(string $section, array $orderedIds): bool
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /** Deletes all items and resets the episode to the current week/year defaults; returns the new episode row. */
+    public function resetEpisode(): array
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /** Inserts a new author history record or increments use_count and updates last_used_at if it already exists. */
+    public function upsertAuthorHistory(string $domain, string $authorName, string $authorUrl): void
+    {
+        throw new \BadMethodCallException('Not yet implemented');
+    }
+
+    /**
+     * Returns domain-specific authors first, then others, filtered by an optional query string.
+     *
+     * @return array{domain: list<array>, other: list<array>}
+     */
+    public function getAuthorSuggestions(string $domain, string $query): array
+    {
+        throw new \BadMethodCallException('Not yet implemented');
     }
 }

@@ -163,4 +163,5 @@ Static values (show title, tagline, section names, scrape settings) are in `etc/
 | `sections.news` | `News` | Display name for the news section |
 | `db_path` | `var/shownotes.sqlite` | Path to the SQLite database file |
 | `scrape_timeout` | `5` | cURL timeout in seconds for URL metadata fetching |
+| `scrape_useragent` | `Mozilla/5.0 … Chrome/120 …` | HTTP User-Agent sent when fetching article URLs |
 | `max_redirects` | `5` | Maximum HTTP redirects to follow during scraping |
