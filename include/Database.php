@@ -152,31 +152,116 @@ class Database
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 stubs — implemented in feature/backend-core
+    // Write methods — used by api.php handlers
     // -------------------------------------------------------------------------
 
     /** Updates episode metadata (week, year, YouTube URL); returns the updated row. */
     public function updateEpisode(int $week, int $year, string $youtubeUrl): array
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        $stmt = $this->pdo->prepare(
+            'UPDATE episodes SET week_number = :week, year = :year, youtube_url = :url WHERE id = 1'
+        );
+        $stmt->execute([':week' => $week, ':year' => $year, ':url' => $youtubeUrl]);
+
+        return $this->getEpisode();
     }
 
     /** Inserts a new item; assigns the next sort_order within the section; returns the new row. */
     public function addItem(string $section, string $url, string $title, string $authorName, string $authorUrl): array
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        // Compute the next sort_order for this section (0 if the section is empty).
+        $maxStmt = $this->pdo->prepare(
+            'SELECT COALESCE(MAX(sort_order) + 1, 0) AS next_order FROM items WHERE section = :section'
+        );
+        $maxStmt->execute([':section' => $section]);
+        $nextOrder = (int) $maxStmt->fetchColumn();
+
+        $insertStmt = $this->pdo->prepare(
+            'INSERT INTO items (section, url, title, author_name, author_url, sort_order)
+             VALUES (:section, :url, :title, :author_name, :author_url, :sort_order)'
+        );
+        $insertStmt->execute([
+            ':section'     => $section,
+            ':url'         => $url,
+            ':title'       => $title,
+            ':author_name' => $authorName,
+            ':author_url'  => $authorUrl,
+            ':sort_order'  => $nextOrder,
+        ]);
+
+        $newId   = (int) $this->pdo->lastInsertId();
+        $rowStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+        $rowStmt->execute([':id' => $newId]);
+
+        return $rowStmt->fetch();
     }
 
     /** Updates editable fields on an existing item; returns the updated row. */
     public function updateItem(int $id, string $url, string $title, string $authorName, string $authorUrl): array
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        $stmt = $this->pdo->prepare(
+            'UPDATE items
+             SET url = :url, title = :title, author_name = :author_name, author_url = :author_url
+             WHERE id = :id'
+        );
+        $stmt->execute([
+            ':url'         => $url,
+            ':title'       => $title,
+            ':author_name' => $authorName,
+            ':author_url'  => $authorUrl,
+            ':id'          => $id,
+        ]);
+
+        $rowStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+        $rowStmt->execute([':id' => $id]);
+
+        return $rowStmt->fetch();
     }
 
-    /** Deletes an item and resequences sort_order within its section. */
+    /**
+     * Deletes an item and resequences sort_order within its section.
+     *
+     * Both the delete and the resequence run inside a single transaction so
+     * sort_order values are always contiguous after the operation.
+     */
     public function deleteItem(int $id): bool
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        // Fetch the section before deleting so we know what to resequence.
+        $sectionStmt = $this->pdo->prepare('SELECT section FROM items WHERE id = :id');
+        $sectionStmt->execute([':id' => $id]);
+        $section = $sectionStmt->fetchColumn();
+
+        if ($section === false) {
+            return false;
+        }
+
+        $this->pdo->beginTransaction();
+
+        try {
+            $this->pdo->prepare('DELETE FROM items WHERE id = :id')
+                      ->execute([':id' => $id]);
+
+            // Re-number the remaining items in the section: 0, 1, 2, …
+            $remainingStmt = $this->pdo->prepare(
+                'SELECT id FROM items WHERE section = :section ORDER BY sort_order ASC'
+            );
+            $remainingStmt->execute([':section' => $section]);
+            $remaining = $remainingStmt->fetchAll(\PDO::FETCH_COLUMN);
+
+            $reorderStmt = $this->pdo->prepare(
+                'UPDATE items SET sort_order = :order WHERE id = :id'
+            );
+            foreach ($remaining as $position => $itemId) {
+                $reorderStmt->execute([':order' => $position, ':id' => $itemId]);
+            }
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return true;
     }
 
     /**
@@ -186,28 +271,109 @@ class Database
      */
     public function reorderItems(string $section, array $orderedIds): bool
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        $this->pdo->beginTransaction();
+
+        try {
+            $stmt = $this->pdo->prepare(
+                'UPDATE items SET sort_order = :order WHERE id = :id AND section = :section'
+            );
+            foreach ($orderedIds as $position => $itemId) {
+                $stmt->execute([
+                    ':order'   => $position,
+                    ':id'      => $itemId,
+                    ':section' => $section,
+                ]);
+            }
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return true;
     }
 
-    /** Deletes all items and resets the episode to the current week/year defaults; returns the new episode row. */
+    /**
+     * Deletes all items and resets the episode to the current week/year defaults.
+     *
+     * Author history is intentionally preserved — it accumulates across episodes.
+     */
     public function resetEpisode(): array
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        $this->pdo->beginTransaction();
+
+        try {
+            $this->pdo->exec('DELETE FROM items');
+
+            $stmt = $this->pdo->prepare(
+                "UPDATE episodes SET week_number = :week, year = :year, youtube_url = '' WHERE id = 1"
+            );
+            $stmt->execute([':week' => idate('W'), ':year' => (int) date('Y')]);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return $this->getEpisode();
     }
 
-    /** Inserts a new author history record or increments use_count and updates last_used_at if it already exists. */
+    /** Inserts a new author history record or increments use_count and updates last_used_at. */
     public function upsertAuthorHistory(string $domain, string $authorName, string $authorUrl): void
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        $now  = date('c'); // ISO 8601 datetime
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO author_history (domain, author_name, author_url, use_count, last_used_at)
+             VALUES (:domain, :author_name, :author_url, 1, :now)
+             ON CONFLICT(domain, author_name, author_url)
+             DO UPDATE SET use_count = use_count + 1, last_used_at = :now'
+        );
+        $stmt->execute([
+            ':domain'      => $domain,
+            ':author_name' => $authorName,
+            ':author_url'  => $authorUrl,
+            ':now'         => $now,
+        ]);
     }
 
     /**
      * Returns domain-specific authors first, then others, filtered by an optional query string.
      *
-     * @return array{domain: list<array>, other: list<array>}
+     * @return array{domain_authors: list<array>, other_authors: list<array>}
      */
     public function getAuthorSuggestions(string $domain, string $query): array
     {
-        throw new \BadMethodCallException('Not yet implemented');
+        $params = [':domain' => $domain];
+        $likeClause = '';
+
+        if ($query !== '') {
+            $params[':like'] = '%' . $query . '%';
+            $likeClause = 'AND author_name LIKE :like';
+        }
+
+        $domainStmt = $this->pdo->prepare(
+            "SELECT author_name, author_url, use_count
+             FROM author_history
+             WHERE domain = :domain $likeClause
+             ORDER BY use_count DESC, last_used_at DESC
+             LIMIT 10"
+        );
+        $domainStmt->execute($params);
+
+        $otherStmt = $this->pdo->prepare(
+            "SELECT author_name, author_url, use_count
+             FROM author_history
+             WHERE domain != :domain $likeClause
+             ORDER BY use_count DESC, last_used_at DESC
+             LIMIT 5"
+        );
+        $otherStmt->execute($params);
+
+        return [
+            'domain_authors' => $domainStmt->fetchAll(),
+            'other_authors'  => $otherStmt->fetchAll(),
+        ];
     }
 }
