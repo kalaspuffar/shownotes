@@ -105,9 +105,10 @@ function handleScrapeUrl(array $body, Scraper $scraper): array
 
     $result = $scraper->scrape($url);
 
-    // A non-null error on a URL that was never fetched is a hard failure.
-    // Distinguish by checking whether domain was extracted (fetch happened).
-    if ($result['error'] !== null && $result['domain'] === '') {
+    // Hard failure: SSRF validation rejected the URL, or the HTTP fetch itself
+    // failed (timeout, cURL error, HTTP 4xx/5xx). The fetch_failed flag is set
+    // by Scraper in both of these cases, making the distinction unambiguous.
+    if ($result['fetch_failed']) {
         return jsonError($result['error']);
     }
 
@@ -217,11 +218,16 @@ function handleReorderItems(array $body, Database $db): array
 
     // Verify all IDs belong to the given section.
     $items = $db->getItems();
-    $sectionIds = array_column($items[$section], 'id');
+    $sectionIds = array_map('intval', array_column($items[$section], 'id'));
     foreach ($orderedIds as $itemId) {
-        if (!in_array($itemId, array_map('intval', $sectionIds), true)) {
+        if (!in_array($itemId, $sectionIds, true)) {
             return jsonError("Item ID $itemId does not belong to section \"$section\"", 400);
         }
+    }
+
+    // Verify the submitted list is complete — a partial list would create sort_order collisions.
+    if (count($orderedIds) !== count($sectionIds)) {
+        return jsonError('order must contain every item in the section', 400);
     }
 
     $db->reorderItems($section, $orderedIds);
@@ -274,9 +280,12 @@ function handleGenerateMarkdown(Database $db, array $config): array
 // Shared utilities
 // -------------------------------------------------------------------------
 
-/** Extracts the bare hostname from a URL, stripping the www. prefix. */
+/**
+ * Extracts the bare hostname from a URL, stripping the www. prefix.
+ *
+ * Delegates to Scraper::extractDomain() so the logic lives in exactly one place.
+ */
 function extractDomain(string $url): string
 {
-    $host = parse_url($url, PHP_URL_HOST) ?? '';
-    return (string) preg_replace('/^www\./i', '', $host);
+    return Scraper::extractDomain($url);
 }

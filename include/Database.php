@@ -196,8 +196,13 @@ class Database
         return $rowStmt->fetch();
     }
 
-    /** Updates editable fields on an existing item; returns the updated row. */
-    public function updateItem(int $id, string $url, string $title, string $authorName, string $authorUrl): array
+    /**
+     * Updates editable fields on an existing item; returns the updated row,
+     * or false if no item with the given ID exists.
+     *
+     * @return array|false
+     */
+    public function updateItem(int $id, string $url, string $title, string $authorName, string $authorUrl): array|false
     {
         $stmt = $this->pdo->prepare(
             'UPDATE items

@@ -28,12 +28,16 @@ class Generator
         $lines[] = '';
 
         // Vulnerability section — tight bulleted list, no blank lines between items.
+        // The blank line after the heading always appears (empty section = heading + blank).
+        // A second blank line after the items is only added when items were actually emitted.
         $lines[] = "### {$config['sections']['vulnerability']}";
         $lines[] = '';
         foreach ($items['vulnerability'] as $item) {
             $lines[] = "- [{$item['title']}]({$item['url']})";
         }
-        $lines[] = '';
+        if (!empty($items['vulnerability'])) {
+            $lines[] = '';
+        }
 
         // News section — three-line blocks separated by single blank lines.
         $lines[] = "### {$config['sections']['news']}";
