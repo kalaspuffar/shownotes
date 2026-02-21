@@ -152,23 +152,29 @@ function renderItem(item, section) {
     row.className = 'item-row';
     row.dataset.id      = item.id;
     row.dataset.section = section;
-    row.draggable = true;
+    // draggable is NOT set on the row — only the handle initiates a drag,
+    // so that clicking into text fields never accidentally starts a drag gesture.
 
     // Drag handle — visually indicates draggability; hidden from assistive tech
     const handle = document.createElement('span');
     handle.className = 'drag-handle';
     handle.textContent = '⠿';
     handle.setAttribute('aria-hidden', 'true');
+    handle.draggable = true;
     row.appendChild(handle);
 
-    // Drag events
-    row.addEventListener('dragstart', (e) => {
+    // Drag events are bound to the handle, not the row.
+    // setDragImage forces the browser to use the full item row as the ghost
+    // image even though the drag source is just the small handle element.
+    handle.addEventListener('dragstart', (e) => {
         dragSourceSection = section; // captured at module scope for dragover guards
         e.dataTransfer.setData('text/plain', String(item.id));
         e.dataTransfer.effectAllowed = 'move';
+        const rect = row.getBoundingClientRect();
+        e.dataTransfer.setDragImage(row, e.clientX - rect.left, e.clientY - rect.top);
         row.classList.add('dragging');
     });
-    row.addEventListener('dragend', () => {
+    handle.addEventListener('dragend', () => {
         row.classList.remove('dragging');
         dragSourceSection = null;
     });
