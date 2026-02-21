@@ -16,22 +16,22 @@ class Scraper
     /**
      * Validates the URL, fetches the page, and extracts metadata.
      *
-     * @return array{title: string, author_name: string, author_url: string, domain: string, error: string|null}
+     * @return array{title: string, author_name: string, author_url: string, domain: string, error: string|null, fetch_failed: bool}
      */
     public function scrape(string $url): array
     {
-        $empty = ['title' => '', 'author_name' => '', 'author_url' => '', 'domain' => '', 'error' => null];
+        $empty = ['title' => '', 'author_name' => '', 'author_url' => '', 'domain' => '', 'error' => null, 'fetch_failed' => false];
 
         $validationError = $this->validateUrl($url);
         if ($validationError !== null) {
-            return array_merge($empty, ['error' => $validationError]);
+            return array_merge($empty, ['error' => $validationError, 'fetch_failed' => true]);
         }
 
-        $empty['domain'] = $this->extractDomain($url);
+        $empty['domain'] = self::extractDomain($url);
 
         [$html, $fetchError] = $this->fetchUrl($url);
         if ($fetchError !== null) {
-            return array_merge($empty, ['error' => $fetchError]);
+            return array_merge($empty, ['error' => $fetchError, 'fetch_failed' => true]);
         }
 
         return $this->extractMetadata($html, $url, $empty);
@@ -99,6 +99,8 @@ class Scraper
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_ENCODING       => '',   // Accept any encoding; auto-decompress.
             CURLOPT_HTTPHEADER     => ['Accept: text/html,application/xhtml+xml,application/xml;q=0.9'],
+            // Cap download size to protect against runaway responses on low-resource hosts.
+            CURLOPT_MAXFILESIZE    => 2 * 1024 * 1024,
         ]);
 
         $html     = curl_exec($ch);
@@ -187,10 +189,10 @@ class Scraper
             return trim($articleAuthor->item(0)->nodeValue);
         }
 
-        // 4. Schema.org JSON-LD
-        $name = $this->extractFromJsonLd($html, 'name');
-        if ($name !== '') {
-            return $name;
+        // 4. Schema.org JSON-LD (single parsing pass returns name, url, sameAs together).
+        $jsonLd = $this->extractAuthorFromJsonLd($html);
+        if ($jsonLd['name'] !== '') {
+            return $jsonLd['name'];
         }
 
         // 5. HTML byline class heuristics
@@ -210,15 +212,13 @@ class Scraper
 
     private function extractAuthorUrl(\DOMXPath $xpath, string $html): string
     {
-        // 1. Schema.org JSON-LD: author.url or author.sameAs
-        $url = $this->extractFromJsonLd($html, 'url');
-        if ($url !== '') {
-            return $url;
+        // 1. Schema.org JSON-LD: author.url or author.sameAs (single parsing pass).
+        $jsonLd = $this->extractAuthorFromJsonLd($html);
+        if ($jsonLd['url'] !== '') {
+            return $jsonLd['url'];
         }
-
-        $sameAs = $this->extractFromJsonLd($html, 'sameAs');
-        if ($sameAs !== '') {
-            return $sameAs;
+        if ($jsonLd['sameAs'] !== '') {
+            return $jsonLd['sameAs'];
         }
 
         // 2. <link rel="author" href="...">
@@ -240,16 +240,21 @@ class Scraper
     }
 
     /**
-     * Parses JSON-LD script blocks looking for Article/NewsArticle/BlogPosting types
-     * and extracts the given author field ('name', 'url', or 'sameAs').
+     * Parses JSON-LD script blocks in a single pass and returns all author fields.
+     *
+     * Looks for Article/NewsArticle/BlogPosting schema types and extracts
+     * author name, url, and sameAs simultaneously to avoid repeated regex/JSON work.
+     *
+     * @return array{name: string, url: string, sameAs: string}
      */
-    private function extractFromJsonLd(string $html, string $field): string
+    private function extractAuthorFromJsonLd(string $html): array
     {
+        $result       = ['name' => '', 'url' => '', 'sameAs' => ''];
         $articleTypes = ['Article', 'NewsArticle', 'BlogPosting'];
 
         // Extract all <script type="application/ld+json"> blocks from the raw HTML.
         if (!preg_match_all('/<script[^>]+type=["\']application\/ld\+json["\'][^>]*>(.*?)<\/script>/si', $html, $matches)) {
-            return '';
+            return $result;
         }
 
         foreach ($matches[1] as $jsonRaw) {
@@ -271,25 +276,32 @@ class Scraper
                     continue;
                 }
 
-                $value = $author[$field] ?? '';
-                if (is_string($value) && $value !== '') {
-                    return $value;
+                foreach (['name', 'url', 'sameAs'] as $field) {
+                    $value = $author[$field] ?? '';
+                    if (is_string($value) && $value !== '') {
+                        $result[$field] = $value;
+                    }
+                }
+
+                // Return on first matching article node with any author data.
+                if ($result['name'] !== '' || $result['url'] !== '' || $result['sameAs'] !== '') {
+                    return $result;
                 }
             }
         }
 
-        return '';
+        return $result;
     }
 
     // -------------------------------------------------------------------------
     // Domain extraction
     // -------------------------------------------------------------------------
 
-    private function extractDomain(string $url): string
+    public static function extractDomain(string $url): string
     {
         $host = parse_url($url, PHP_URL_HOST) ?? '';
 
         // Strip the www. prefix for cleaner domain-based author history lookups.
-        return preg_replace('/^www\./i', '', $host);
+        return (string) preg_replace('/^www\./i', '', $host);
     }
 }
