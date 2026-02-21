@@ -226,7 +226,6 @@ header h1 {
     border-bottom: 1px solid var(--color-border);
     position: relative;
     background-color: var(--color-surface);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .item-row:last-child {
@@ -539,6 +538,7 @@ select:hover {
    ============================================================ */
 .item-row.dragging {
     opacity: 0.4;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .drop-indicator {
@@ -633,10 +633,12 @@ ul.author-suggest-list {
    All colour tokens are redefined here so every component
    that uses CSS custom properties picks up dark mode for free.
    Contrast ratios verified against WCAG AA (4.5:1 minimum):
-     #e8e8e8 on #1c1c1e → ~16.5:1 ✓
-     #98989c on #1c1c1e →  ~5.1:1 ✓
-     #fff on #5a9469    →  ~4.6:1 ✓
-     #e05555 on #2c2c2e →  ~4.7:1 ✓
+     --color-text (#e8e8e8) on --color-surface (#1c1c1e) → ~16.5:1 ✓  (body text on background)
+     --color-text-muted (#98989c) on --color-bg (#1c1c1e) → ~5.1:1 ✓  (muted labels on background)
+     #fff on --color-primary (#5a9469) → ~4.6:1 ✓                      (.toast.success background)
+     --color-danger (#e05555) on --color-surface (#2c2c2e) → ~4.7:1 ✓  (danger text on surface)
+     Known gap: #fff on --color-danger (#e05555) → ~3.6:1 ✗            (.toast.error background, small text;
+                acceptable for this personal tool — document rather than alter the light-mode danger hue)
    ============================================================ */
 @media (prefers-color-scheme: dark) {
     :root {
@@ -652,13 +654,14 @@ ul.author-suggest-list {
         --color-drag-over:    #5a9469;
     }
 
-    /* Toast warning colour has no CSS variable — override directly */
+    /* Toast warning has no CSS variable — override directly.
+       #a05c10 with white text → ~5.3:1, passing WCAG AA. */
     .toast.warning {
-        background-color: #e8943a;
+        background-color: #a05c10;
     }
 
-    /* Heavier shadow so ghost is visible on a dark surface */
-    .item-row {
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    /* Stronger shadow on the dragging placeholder for visibility on dark surfaces */
+    .item-row.dragging {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     }
 }

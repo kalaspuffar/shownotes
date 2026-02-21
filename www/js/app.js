@@ -172,7 +172,11 @@ function renderItem(item, section) {
         e.dataTransfer.effectAllowed = 'move';
         const rect = row.getBoundingClientRect();
         e.dataTransfer.setDragImage(row, e.clientX - rect.left, e.clientY - rect.top);
-        row.classList.add('dragging');
+        // Defer the class addition by one animation frame so Chrome captures the
+        // ghost before the opacity reduction from .dragging is applied. Without this,
+        // Chrome snapshots the element after the handler finishes (already with
+        // opacity: 0.4), producing a semi-transparent ghost image.
+        requestAnimationFrame(() => row.classList.add('dragging'));
     });
     handle.addEventListener('dragend', () => {
         row.classList.remove('dragging');
