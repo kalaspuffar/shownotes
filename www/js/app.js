@@ -108,8 +108,12 @@ function bindEpisodeMetaListeners() {
                 year,
                 youtube_url: youtubeUrl,
             });
-            state.episode = data;
+            state.episode = data.episode;
+            ['ep-week', 'ep-year', 'ep-youtube'].forEach(id =>
+                document.getElementById(id).classList.remove('unsaved')
+            );
             setStatusIndicator('Saved');
+            setTimeout(() => setStatusIndicator(''), 2500);
         } catch {
             setStatusIndicator('Save failed', true);
         }
@@ -117,6 +121,7 @@ function bindEpisodeMetaListeners() {
 
     ['ep-week', 'ep-year', 'ep-youtube'].forEach(id => {
         document.getElementById(id).addEventListener('input', () => {
+            document.getElementById(id).classList.add('unsaved');
             setStatusIndicator('Saving…');
             saveEpisode();
         });
@@ -224,7 +229,14 @@ function startInlineEdit(valueEl, item, key, section) {
     input.focus();
     input.select();
 
+    // When Escape is pressed, restoreValue() removes the input from the DOM,
+    // which fires a blur event. This flag prevents the debounced save from
+    // running after an explicit cancellation.
+    let cancelled = false;
+
     const saveEdit = createDebounce(async () => {
+        if (cancelled) return;
+
         const newValue = input.value.trim();
         if (newValue === originalValue) {
             restoreValue();
@@ -232,14 +244,12 @@ function startInlineEdit(valueEl, item, key, section) {
         }
 
         // Build the full fields payload (all fields must be sent)
-        const row = valueEl.closest('.item-row');
-        const fields = collectItemFields(row, item, key, newValue);
+        const fields = collectItemFields(item, key, newValue);
 
         try {
             const data = await apiCall('update_item', { id: item.id, ...fields });
-            // Patch the item in state
-            patchItemInState(section, data);
-            // Re-render section (simplest approach to keep state + DOM in sync)
+            // Patch the item in state and re-render
+            patchItemInState(section, data.item);
             if (section === 'vulnerability') renderVulnerabilityList();
             else renderNewsList();
         } catch {
@@ -259,14 +269,15 @@ function startInlineEdit(valueEl, item, key, section) {
             e.preventDefault();
             saveEdit();
         } else if (e.key === 'Escape') {
-            // Cancel: restore without saving
+            // Cancel: set flag first so the blur-triggered save no-ops
+            cancelled = true;
             restoreValue();
         }
     });
 }
 
-/* Collects all editable field values from an item row for the update_item call. */
-function collectItemFields(row, item, changedKey, changedValue) {
+/* Collects all editable field values from an item for the update_item call. */
+function collectItemFields(item, changedKey, changedValue) {
     const fields = {
         url:         item.url         || '',
         title:       item.title       || '',
@@ -410,7 +421,7 @@ function bindAddButton() {
             });
 
             // Append to state and re-render
-            state.items[section].push(data);
+            state.items[section].push(data.item);
             if (section === 'vulnerability') renderVulnerabilityList();
             else renderNewsList();
 

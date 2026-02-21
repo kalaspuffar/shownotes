@@ -7,8 +7,11 @@ declare(strict_types=1);
  *
  * This class is intentionally pure: it takes data as arguments and returns a string.
  * It does not access the database, read files, or produce side-effects of any kind.
+ *
+ * Named MarkdownGenerator (not Generator) to avoid colliding with PHP's built-in
+ * Generator class, which has been reserved since PHP 5.5 for the yield construct.
  */
-class Generator
+class MarkdownGenerator
 {
     /**
      * Produces the complete Markdown output for the given episode state.

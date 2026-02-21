@@ -110,11 +110,19 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
         </div>
     </div>
 
+    <div id="action-bar">
+        <button type="button" id="btn-generate">Generate Show Notes</button>
+    </div>
+
     <section id="output-panel" aria-label="Generated Markdown output" hidden>
         <h2>Generated Markdown</h2>
         <textarea readonly id="output-markdown" aria-label="Generated Markdown content" rows="20"></textarea>
-        <button type="button" id="btn-copy">Copy</button>
+        <button type="button" id="btn-copy">📋 Copy to Clipboard</button>
     </section>
+
+    <!-- Visually-hidden live region; JS updates this to announce list mutations
+         (item added/deleted) to screen-reader users without visual disruption. -->
+    <span class="sr-only" aria-live="polite" id="list-announcer"></span>
 </main>
 
 <footer>
