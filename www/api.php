@@ -305,6 +305,9 @@ function handleUpdateTalkingPoints(array $body, Database $db): array
     try {
         $item = $db->updateTalkingPoints($itemId, $talkingPoints);
     } catch (\InvalidArgumentException $e) {
+        if (str_contains($e->getMessage(), 'not found')) {
+            return jsonError('Item not found', 404);
+        }
         return jsonError('Talking points can only be set on primary or standalone items.');
     }
 
@@ -323,23 +326,48 @@ function handleNestItem(array $body, Database $db): array
         return jsonError('targetId must be a positive integer');
     }
 
+    // Guard: self-nesting — reject before any DB work.
+    if ($itemId === $targetId) {
+        return jsonError('itemId and targetId must be different items');
+    }
+
     $transferTalkingPoints = isset($body['transferTalkingPoints'])
         ? (bool) $body['transferTalkingPoints']
         : false;
 
-    // Find the source item to check whether it has talking points that would
-    // be silently discarded if the caller did not explicitly request a transfer.
+    // Fetch all items once so we can locate both the source and the target for
+    // pre-flight validation without an extra round-trip later.
     $allItems   = $db->getItemsFlat();
     $sourceItem = null;
+    $targetItem = null;
     foreach (array_merge($allItems['vulnerability'] ?? [], $allItems['news'] ?? []) as $candidate) {
         if ((int) $candidate['id'] === $itemId) {
             $sourceItem = $candidate;
+        }
+        if ((int) $candidate['id'] === $targetId) {
+            $targetItem = $candidate;
+        }
+        if ($sourceItem !== null && $targetItem !== null) {
             break;
         }
     }
 
     if ($sourceItem === null) {
         return jsonError('Item not found', 400);
+    }
+
+    // Guard: only news section items may be nested (spec §5.2).
+    if ($sourceItem['section'] !== 'news') {
+        return jsonError('Only news items can be nested into story groups');
+    }
+
+    // Guard: circular reference — target must not already be a secondary of itemId.
+    if (
+        $targetItem !== null
+        && $targetItem['parent_id'] !== null
+        && (int) $targetItem['parent_id'] === $itemId
+    ) {
+        return jsonError('Cannot nest an item under its own secondary (circular reference)');
     }
 
     $existingTalkingPoints = $sourceItem['talking_points'] ?? '';
@@ -349,29 +377,25 @@ function handleNestItem(array $body, Database $db): array
         return [
             'success'              => false,
             'requiresConfirmation' => true,
-            'warning'              => 'This item has talking points that will be lost when nested. '
-                                    . 'Send transferTalkingPoints: true to move them to the target item instead.',
+            // Spec §5.2: this copy is shown directly in the frontend confirmation dialog.
+            'warning'              => 'This item has recording notes. If you continue, those notes will be '
+                                    . 'transferred to the new primary link. The item will lose its notes.',
             'fromItemId'           => $itemId,
             'toItemId'             => $targetId,
         ];
     }
 
-    // Clear talking points on the source *before* nesting. After nestItem()
-    // the source becomes a secondary (parent_id IS NOT NULL), at which point
-    // updateTalkingPoints() would rightly reject the write.
-    if ($transferTalkingPoints && $existingTalkingPoints !== '') {
-        $db->updateTalkingPoints($itemId, '');
-    }
+    // Pass the talking points into nestItem() so clearing the source, performing
+    // the nest, and writing to the target all happen inside a single transaction.
+    // Passing null means no talking-points work is done.
+    $talkingPointsToTransfer = ($transferTalkingPoints && $existingTalkingPoints !== '')
+        ? $existingTalkingPoints
+        : null;
 
     try {
-        $db->nestItem($itemId, $targetId);
+        $db->nestItem($itemId, $targetId, $talkingPointsToTransfer);
     } catch (\InvalidArgumentException $e) {
         return jsonError($e->getMessage());
-    }
-
-    // Transfer the saved talking points to the target (now the group primary).
-    if ($transferTalkingPoints && $existingTalkingPoints !== '') {
-        $db->updateTalkingPoints($targetId, $existingTalkingPoints);
     }
 
     $newsItems = $db->getItemsFlat()['news'] ?? [];
@@ -397,6 +421,33 @@ function handleExtractItem(array $body, Database $db): array
 
     if (!in_array($itemId, $orderedIds, true)) {
         return jsonError('newTopLevelOrder must contain itemId');
+    }
+
+    // Guard: no duplicate IDs (spec §5.3).
+    if (count($orderedIds) !== count(array_unique($orderedIds))) {
+        return jsonError('newTopLevelOrder must not contain duplicate IDs');
+    }
+
+    // Guard: completeness — the list must be a complete permutation of the
+    // post-extraction top-level set (all current top-level news IDs plus itemId,
+    // which is being promoted from secondary). Mirrors the check in handleReorderItems.
+    $allItems = $db->getItemsFlat();
+    $currentTopLevelIds = array_map(
+        'intval',
+        array_column(
+            array_filter($allItems['news'] ?? [], fn($n) => $n['parent_id'] === null),
+            'id'
+        )
+    );
+    // itemId is currently a secondary; add it to the expected post-extraction set.
+    $expectedIds  = $currentTopLevelIds;
+    $expectedIds[] = $itemId;
+    $expectedIds  = array_values(array_unique($expectedIds));
+    sort($expectedIds);
+    $submittedSorted = $orderedIds;
+    sort($submittedSorted);
+    if ($submittedSorted !== $expectedIds) {
+        return jsonError('newTopLevelOrder must contain every top-level news item ID after extraction', 400);
     }
 
     try {
@@ -425,6 +476,11 @@ function handleReorderGroup(array $body, Database $db): array
     }
 
     $orderedIds = array_map('intval', $newSecondaryOrder);
+
+    // Guard: no duplicate IDs (spec §5.4).
+    if (count($orderedIds) !== count(array_unique($orderedIds))) {
+        return jsonError('newSecondaryOrder must not contain duplicate IDs');
+    }
 
     try {
         $db->reorderGroupItems($primaryId, $orderedIds);
