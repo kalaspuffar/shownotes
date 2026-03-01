@@ -24,7 +24,7 @@ let dragSourceSection = null;
    10.2 — apiCall(action, payload)
    Single AJAX boundary for all server communication.
    ---------------------------------------------------------- */
-async function apiCall(action, payload = {}) {
+async function apiCall(action, payload = {}, options = {}) {
     const body = JSON.stringify({ action, ...payload });
 
     let response;
@@ -46,6 +46,9 @@ async function apiCall(action, payload = {}) {
         showToast('error', 'Server returned an unexpected response.');
         throw new Error('Non-JSON response from server');
     }
+
+    // raw: true bypasses the success check — caller handles the full response object.
+    if (options.raw) return json;
 
     if (!json.success) {
         const message = json.error || 'An unknown error occurred.';
@@ -131,6 +134,18 @@ function bindEpisodeMetaListeners() {
             saveEpisode();
         });
     });
+}
+
+/* ----------------------------------------------------------
+   updateStartRecordingButton()
+   Enables the "Start Recording" button when the episode has at
+   least one item; disables it when both sections are empty.
+   ---------------------------------------------------------- */
+function updateStartRecordingButton() {
+    const btn = document.getElementById('btn-start-recording');
+    if (!btn) return;
+    const hasItems = (state.items.vulnerability.length + state.items.news.length) > 0;
+    btn.disabled = !hasItems;
 }
 
 /* Status indicator helper */
@@ -356,7 +371,13 @@ function renderVulnerabilityList() {
 }
 
 function renderNewsList() {
-    renderSectionList('news-list', state.items.news, 'news');
+    const container = document.getElementById('news-list');
+    if (!container) return;
+
+    // Remove all existing item rows and story-group containers; preserve the <h2> heading
+    container.querySelectorAll('.item-row, .story-group').forEach(el => el.remove());
+
+    container.appendChild(storyGroupModule.renderNewsSection(state.items.news));
 }
 
 function renderSectionList(containerId, items, section) {
@@ -381,12 +402,25 @@ async function handleDeleteItem(id, section) {
     try {
         await apiCall('delete_item', { id });
 
-        // Remove from state
+        // Remove deleted item from state
         state.items[section] = state.items[section].filter(i => i.id !== id);
+
+        // For news: promote any secondaries whose primary was just deleted to standalone
+        if (section === 'news') {
+            const survivingIds = new Set(state.items.news.map(i => i.id));
+            state.items.news = state.items.news.map(item => {
+                if (item.parent_id !== null && !survivingIds.has(item.parent_id)) {
+                    return { ...item, parent_id: null };
+                }
+                return item;
+            });
+        }
 
         // Re-render affected section
         if (section === 'vulnerability') renderVulnerabilityList();
         else renderNewsList();
+
+        updateStartRecordingButton();
     } catch {
         // Error toast already displayed by apiCall
     }
@@ -476,6 +510,8 @@ function bindAddButton() {
             state.items[section].push(data.item);
             if (section === 'vulnerability') renderVulnerabilityList();
             else renderNewsList();
+
+            updateStartRecordingButton();
 
             // Reset the add panel
             resetAddPanel();
@@ -712,18 +748,67 @@ function bindAuthorSuggestionsForAddPanel() {
 }
 
 /* ----------------------------------------------------------
+   handleDropOnItem(draggedId, targetId)
+   Calls the nest_item API. Handles the 409 requiresConfirmation
+   response with a confirmation dialog before re-issuing the call
+   with transferTalkingPoints: true.
+   ---------------------------------------------------------- */
+async function handleDropOnItem(draggedId, targetId) {
+    const json = await apiCall(
+        'nest_item',
+        { itemId: draggedId, targetId, transferTalkingPoints: false },
+        { raw: true }
+    );
+
+    if (!json.success && json.requiresConfirmation) {
+        // 409: primary has talking points — ask the user before transferring
+        const confirmed = window.confirm(
+            json.warning || 'This item has recording notes. Transfer them to the new primary?'
+        );
+        if (!confirmed) return;
+
+        try {
+            const data = await apiCall('nest_item', {
+                itemId: draggedId,
+                targetId,
+                transferTalkingPoints: true,
+            });
+            state.items.news = data.items.news;
+            renderNewsList();
+        } catch {
+            // Error toast shown by apiCall
+        }
+        return;
+    }
+
+    if (!json.success) {
+        showToast('error', json.error || 'Nesting failed.');
+        return;
+    }
+
+    state.items.news = json.data.items.news;
+    renderNewsList();
+}
+
+/* ----------------------------------------------------------
    Drag-and-drop — section container bindings
    Binds dragover/dragleave/drop on the given list container.
    Only accepts drops from items belonging to the same section.
+
+   For the news section, also supports drop-on-item nesting:
+   - Center 50% of an item height → .drop-target-nest ring → nest_item
+   - Top / bottom 25% → horizontal bar indicator → reorder_items
+   Story-group containers are treated as single draggable units;
+   their full expanded ID list (primary + secondaries) is sent to
+   reorder_items so the server-side count validation passes.
    ---------------------------------------------------------- */
 function bindDragAndDrop(containerId, section) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
     let dropIndicator = null;
-    // The item row to insert the dragged item *before* on drop.
-    // null means append at the end.
-    let dropBeforeRow = null;
+    let dropBeforeRow = null; // top-level element to insert before (reorder mode)
+    let nestTargetEl  = null; // standalone .item-row highlighted for nesting (news only)
 
     function removeIndicator() {
         if (dropIndicator) {
@@ -732,31 +817,86 @@ function bindDragAndDrop(containerId, section) {
         }
     }
 
-    // Returns item rows (excludes the drop-indicator and the dragged row itself)
-    function getStaticRows() {
-        return [...container.querySelectorAll('.item-row:not(.dragging)')];
+    function removeNestHighlight() {
+        if (nestTargetEl) {
+            nestTargetEl.classList.remove('drop-target-nest');
+            nestTargetEl = null;
+        }
+    }
+
+    // Returns top-level draggable elements in DOM order.
+    // For news: mix of .story-group containers and standalone .item-row elements.
+    // For vulnerability: flat list of .item-row elements.
+    function getTopLevelDraggables() {
+        if (section !== 'news') {
+            return [...container.querySelectorAll('.item-row:not(.dragging)')];
+        }
+        const groups     = [...container.querySelectorAll(':scope > .story-group:not(.dragging)')];
+        const standalones = [...container.querySelectorAll(':scope > .item-row:not(.dragging)')];
+        return [...groups, ...standalones].sort((a, b) =>
+            a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+        );
+    }
+
+    // Gets the representative ID for a top-level draggable element.
+    // Groups use data-primary-id; standalone rows use data-id.
+    function getDraggableId(el) {
+        return parseInt(
+            el.classList.contains('story-group') ? el.dataset.primaryId : el.dataset.id,
+            10
+        );
     }
 
     container.addEventListener('dragover', (e) => {
-        // Reject cross-section drags at the dragover stage so the browser shows
-        // a "no-drop" cursor instead of misleadingly accepting the gesture (Issue 3 fix)
+        // Reject cross-section drags so the browser shows a "no-drop" cursor
         if (dragSourceSection !== null && dragSourceSection !== section) return;
 
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
 
-        // Find which row the mouse is above, based on vertical midpoints
-        const rows = getStaticRows();
+        const topLevel = getTopLevelDraggables();
+
+        // --- News section: detect drop-on center zone for nesting ---
+        if (section === 'news') {
+            // Only direct-child standalone .item-row elements can be nest targets
+            const standalones = [...container.querySelectorAll(':scope > .item-row:not(.dragging)')];
+            let foundNestTarget = null;
+
+            for (const row of standalones) {
+                const rect = row.getBoundingClientRect();
+                if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    const ratio = (e.clientY - rect.top) / rect.height;
+                    if (ratio > 0.25 && ratio < 0.75) {
+                        foundNestTarget = row;
+                    }
+                    break;
+                }
+            }
+
+            if (foundNestTarget) {
+                removeIndicator();
+                if (nestTargetEl !== foundNestTarget) {
+                    removeNestHighlight();
+                    nestTargetEl = foundNestTarget;
+                    foundNestTarget.classList.add('drop-target-nest');
+                }
+                dropBeforeRow = null;
+                return;
+            }
+        }
+
+        // Not in nest zone — clear any nest highlight and show reorder bar
+        removeNestHighlight();
+
         dropBeforeRow = null;
-        for (const row of rows) {
-            const rect = row.getBoundingClientRect();
+        for (const el of topLevel) {
+            const rect = el.getBoundingClientRect();
             if (e.clientY < rect.top + rect.height / 2) {
-                dropBeforeRow = row;
+                dropBeforeRow = el;
                 break;
             }
         }
 
-        // Reposition indicator
         removeIndicator();
         dropIndicator = document.createElement('div');
         dropIndicator.className = 'drop-indicator';
@@ -769,9 +909,10 @@ function bindDragAndDrop(containerId, section) {
     });
 
     container.addEventListener('dragleave', (e) => {
-        // Only clear when the mouse truly leaves the container (not just a child element)
+        // Only clear when the mouse truly leaves the container
         if (!container.contains(e.relatedTarget)) {
             removeIndicator();
+            removeNestHighlight();
             dropBeforeRow = null;
         }
     });
@@ -779,29 +920,49 @@ function bindDragAndDrop(containerId, section) {
     container.addEventListener('drop', async (e) => {
         e.preventDefault();
 
-        // Snapshot before cleanup
         const insertBefore = dropBeforeRow;
+        const nestTarget   = nestTargetEl;
         removeIndicator();
+        removeNestHighlight();
         dropBeforeRow = null;
 
         const draggedId = parseInt(e.dataTransfer.getData('text/plain'), 10);
 
-        // Cross-section drop guard: verify item belongs to this section
+        // Cross-section drop guard
         const sectionItems = state.items[section] || [];
         if (!sectionItems.find(item => item.id === draggedId)) return;
 
-        // Compute new ordered array of IDs:
-        // take all non-dragged rows, find insertion index, splice dragged id in
-        const otherRows = getStaticRows().filter(
-            row => parseInt(row.dataset.id, 10) !== draggedId
-        );
-        const insertIdx = insertBefore
-            ? otherRows.indexOf(insertBefore)
-            : -1;
-        const effectiveIdx = insertIdx < 0 ? otherRows.length : insertIdx;
+        // Ignore drags from secondary items (intra-group reorder is a future phase)
+        if (section === 'news') {
+            const draggedItem = sectionItems.find(item => item.id === draggedId);
+            if (draggedItem && draggedItem.parent_id !== null) return;
+        }
 
-        const orderedIds = otherRows.map(row => parseInt(row.dataset.id, 10));
-        orderedIds.splice(effectiveIdx, 0, draggedId);
+        // --- Nest drop ---
+        if (nestTarget) {
+            const targetId = parseInt(nestTarget.dataset.id, 10);
+            await handleDropOnItem(draggedId, targetId);
+            return;
+        }
+
+        // --- Reorder drop ---
+        const otherEls = getTopLevelDraggables().filter(el => getDraggableId(el) !== draggedId);
+        const insertIdx = insertBefore ? otherEls.indexOf(insertBefore) : -1;
+        const effectiveIdx = insertIdx < 0 ? otherEls.length : insertIdx;
+
+        const topLevelIds = otherEls.map(el => getDraggableId(el));
+        topLevelIds.splice(effectiveIdx, 0, draggedId);
+
+        // For news: expand to full list (primary + its secondaries in sort order)
+        // so the server-side count validation passes.
+        const orderedIds = section !== 'news'
+            ? topLevelIds
+            : topLevelIds.flatMap(id => {
+                const secs = sectionItems
+                    .filter(i => i.parent_id === id)
+                    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+                return [id, ...secs.map(s => s.id)];
+            });
 
         try {
             await apiCall('reorder_items', { section, order: orderedIds });
@@ -930,6 +1091,7 @@ function bindNewEpisodeButton() {
             renderEpisodeMeta();
             renderVulnerabilityList();
             renderNewsList();
+            updateStartRecordingButton();
 
             // Hide the output panel so stale markdown is not shown
             outputPanel.setAttribute('hidden', '');
@@ -938,6 +1100,266 @@ function bindNewEpisodeButton() {
         }
     });
 }
+
+/* ----------------------------------------------------------
+   storyGroupModule
+   Renders the news section with story-group containers (grouped
+   items) and standalone item rows. Exposes renderNewsSection()
+   which is called by renderNewsList().
+   ---------------------------------------------------------- */
+const storyGroupModule = (() => {
+
+    /* Renders the entire news section as a DocumentFragment.
+       Items with parent_id === null are primaries or standalones.
+       Items with a non-null parent_id are secondaries, grouped
+       under their primary. */
+    function renderNewsSection(items) {
+        const fragment = document.createDocumentFragment();
+
+        // Index secondaries by their parent_id
+        const secondariesByParent = new Map();
+        for (const item of items) {
+            if (item.parent_id !== null && item.parent_id !== undefined) {
+                if (!secondariesByParent.has(item.parent_id)) {
+                    secondariesByParent.set(item.parent_id, []);
+                }
+                secondariesByParent.get(item.parent_id).push(item);
+            }
+        }
+
+        // Iterate top-level items in their existing sort order
+        for (const item of items) {
+            if (item.parent_id !== null && item.parent_id !== undefined) continue;
+
+            const secondaries = secondariesByParent.get(item.id) || [];
+
+            if (secondaries.length > 0) {
+                fragment.appendChild(renderGroupContainer(item, secondaries));
+            } else {
+                // Standalone item: render with talking-points panel
+                const row = renderItem(item, 'news');
+                row.appendChild(talkingPointsModule.renderTalkingPointsPanel(item));
+                fragment.appendChild(row);
+            }
+        }
+
+        return fragment;
+    }
+
+    /* Builds a .story-group container for one primary and its secondaries. */
+    function renderGroupContainer(primary, secondaries) {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'story-group';
+        groupDiv.draggable = true;
+        groupDiv.dataset.primaryId = primary.id;
+
+        // Group-level drag events — move the whole group as a unit
+        groupDiv.addEventListener('dragstart', (e) => {
+            // If the event originates from an inner .drag-handle, let the inner
+            // handler take over instead (it has draggable=true and wins).
+            if (e.target !== groupDiv && e.target.classList.contains('drag-handle')) return;
+            dragSourceSection = 'news';
+            e.dataTransfer.setData('text/plain', String(primary.id));
+            e.dataTransfer.effectAllowed = 'move';
+            const rect = groupDiv.getBoundingClientRect();
+            e.dataTransfer.setDragImage(groupDiv, e.clientX - rect.left, e.clientY - rect.top);
+            requestAnimationFrame(() => groupDiv.classList.add('dragging'));
+        });
+
+        groupDiv.addEventListener('dragend', () => {
+            groupDiv.classList.remove('dragging');
+            dragSourceSection = null;
+        });
+
+        // Visual group drag handle (not draggable itself — drag propagates to container)
+        const handle = document.createElement('span');
+        handle.className = 'story-group__drag-handle';
+        handle.textContent = '⠿';
+        handle.setAttribute('aria-hidden', 'true');
+        groupDiv.appendChild(handle);
+
+        // Primary item row with badge
+        const primaryWrapper = document.createElement('div');
+        primaryWrapper.className = 'story-group__primary';
+
+        const primaryRow = renderItem(primary, 'news');
+
+        const badge = document.createElement('span');
+        badge.className = 'story-group__primary-badge';
+        badge.textContent = 'PRIMARY';
+
+        const rowHandle = primaryRow.querySelector('.drag-handle');
+        if (rowHandle) {
+            rowHandle.insertAdjacentElement('afterend', badge);
+        } else {
+            primaryRow.prepend(badge);
+        }
+
+        primaryWrapper.appendChild(primaryRow);
+
+        // Talking-points panel attached to the primary item (task 9.6)
+        primaryWrapper.appendChild(talkingPointsModule.renderTalkingPointsPanel(primary));
+
+        groupDiv.appendChild(primaryWrapper);
+
+        // Indented secondaries container
+        const secondariesContainer = document.createElement('div');
+        secondariesContainer.className = 'story-group__secondaries';
+
+        for (const sec of secondaries) {
+            secondariesContainer.appendChild(renderSecondaryItem(sec));
+        }
+
+        groupDiv.appendChild(secondariesContainer);
+
+        return groupDiv;
+    }
+
+    /* Builds a secondary item row with a SECONDARY badge.
+       Secondary items do not get a talking-points panel (spec §talking-points-ui). */
+    function renderSecondaryItem(item) {
+        const row = renderItem(item, 'news');
+
+        const badge = document.createElement('span');
+        badge.className = 'story-group__secondary-badge';
+        badge.textContent = 'SECONDARY';
+
+        const rowHandle = row.querySelector('.drag-handle');
+        if (rowHandle) {
+            rowHandle.insertAdjacentElement('afterend', badge);
+        } else {
+            row.prepend(badge);
+        }
+
+        return row;
+    }
+
+    return { renderNewsSection, renderGroupContainer, renderSecondaryItem };
+})();
+
+/* ----------------------------------------------------------
+   talkingPointsModule
+   Renders and manages the inline contenteditable bullet editor
+   for per-item recording notes (talking points).
+   ---------------------------------------------------------- */
+const talkingPointsModule = (() => {
+
+    /* Creates one <li contenteditable> bullet, wiring the keydown handler. */
+    function createBullet(text) {
+        const li = document.createElement('li');
+        li.contentEditable = 'true';
+        li.textContent = text;
+
+        if (!text) {
+            // data-placeholder is read by the CSS ::before pseudo-element
+            li.dataset.placeholder = 'Add a note…';
+        }
+
+        li.addEventListener('keydown', handleBulletKeydown);
+        return li;
+    }
+
+    /* Returns a .talking-points-panel DOM node for the given item.
+       Splits talking_points on \n to populate the bullet list.
+       Empty talking_points renders one placeholder bullet. */
+    function renderTalkingPointsPanel(item) {
+        const panel = document.createElement('div');
+        panel.className = 'talking-points-panel';
+        panel.dataset.itemId = item.id;
+
+        const label = document.createElement('span');
+        label.className = 'talking-points-panel__label';
+        label.textContent = 'Recording Notes — not included in show notes';
+        label.setAttribute('aria-hidden', 'true');
+        panel.appendChild(label);
+
+        const ul = document.createElement('ul');
+        ul.setAttribute('aria-label', `Recording notes for item ${item.id}`);
+
+        const raw    = item.talking_points || '';
+        const lines  = raw.split('\n');
+        const hasContent = lines.some(l => l.trim() !== '');
+        const bullets = hasContent ? lines : [''];
+
+        for (const line of bullets) {
+            ul.appendChild(createBullet(line));
+        }
+
+        panel.appendChild(ul);
+
+        // Attach debounced auto-save on any input inside the panel
+        const debouncedSave = createDebounce(
+            () => saveTalkingPoints(item.id, panel),
+            800
+        );
+        panel.addEventListener('input', debouncedSave);
+
+        return panel;
+    }
+
+    /* Joins all <li> textContent values with \n, trims each line,
+       and drops trailing empty lines. */
+    function parseBullets(panelEl) {
+        const lines = [...panelEl.querySelectorAll('li')]
+            .map(li => li.textContent.trim());
+
+        let end = lines.length;
+        while (end > 0 && lines[end - 1] === '') {
+            end--;
+        }
+
+        return lines.slice(0, end).join('\n');
+    }
+
+    /* Enter → insert new <li> after current and focus it.
+       Backspace on empty <li> → remove it and focus the previous. */
+    function handleBulletKeydown(e) {
+        const li = e.currentTarget;
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const newLi = createBullet('');
+            if (li.nextSibling) {
+                li.parentNode.insertBefore(newLi, li.nextSibling);
+            } else {
+                li.parentNode.appendChild(newLi);
+            }
+            newLi.focus();
+
+        } else if (e.key === 'Backspace' && li.textContent === '') {
+            e.preventDefault();
+            const prev = li.previousElementSibling;
+            li.remove();
+
+            if (prev) {
+                prev.focus();
+                // Move caret to end of previous bullet
+                const range = document.createRange();
+                const sel   = window.getSelection();
+                range.selectNodeContents(prev);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }
+    }
+
+    /* Calls update_talking_points. Best-effort — errors are already
+       surfaced by apiCall's toast; we do not re-throw here. */
+    async function saveTalkingPoints(itemId, panelEl) {
+        const talkingPoints = parseBullets(panelEl);
+        try {
+            const data = await apiCall('update_talking_points', { itemId, talkingPoints });
+            // Keep in-memory state in sync with the saved value
+            const item = (state.items.news || []).find(i => i.id === itemId);
+            if (item) item.talking_points = data.item.talking_points;
+        } catch {
+            // Error toast already shown by apiCall
+        }
+    }
+
+    return { renderTalkingPointsPanel };
+})();
 
 /* ----------------------------------------------------------
    Initialise on DOMContentLoaded
@@ -967,4 +1389,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Ensure buttons start in correct disabled state
     updateAddButtonState();
+    updateStartRecordingButton();
 });
