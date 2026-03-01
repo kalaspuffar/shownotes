@@ -161,19 +161,29 @@ class Database
      */
     public function getItems(): array
     {
-        $vulnStmt = $this->pdo->prepare(
+        return [
+            'vulnerability' => $this->fetchVulnerabilityItems(),
+            'news'          => $this->fetchNewsItemsOrdered(),
+        ];
+    }
+
+    /**
+     * Returns all vulnerability items ordered by sort_order.
+     *
+     * @return list<array>
+     */
+    private function fetchVulnerabilityItems(): array
+    {
+        $stmt = $this->pdo->prepare(
             "SELECT id, section, url, title, author_name, author_url, sort_order,
                     COALESCE(talking_points, '') AS talking_points, parent_id
              FROM items
              WHERE section = 'vulnerability'
              ORDER BY sort_order ASC"
         );
-        $vulnStmt->execute();
+        $stmt->execute();
 
-        return [
-            'vulnerability' => $vulnStmt->fetchAll(),
-            'news'          => $this->fetchNewsItemsOrdered(),
-        ];
+        return $stmt->fetchAll();
     }
 
     /**
@@ -204,7 +214,7 @@ class Database
                  COALESCE(i.talking_points, '') AS talking_points,
                  i.parent_id
              FROM items i
-             JOIN primary_order po ON po.id = COALESCE(i.parent_id, i.id)
+             LEFT JOIN primary_order po ON po.id = COALESCE(i.parent_id, i.id)
              WHERE i.section = 'news'
              ORDER BY po.primary_sort ASC, i.parent_id IS NOT NULL ASC, i.sort_order ASC"
         );
@@ -403,13 +413,15 @@ class Database
         if ($section === 'news' && !empty($orderedIds)) {
             $placeholders = implode(',', array_fill(0, count($orderedIds), '?'));
             $checkStmt    = $this->pdo->prepare(
-                "SELECT COUNT(*) FROM items WHERE id IN ($placeholders) AND parent_id IS NOT NULL"
+                "SELECT COUNT(*) FROM items
+                 WHERE id IN ($placeholders)
+                   AND (parent_id IS NOT NULL OR section != 'news')"
             );
             $checkStmt->execute(array_values($orderedIds));
 
             if ((int) $checkStmt->fetchColumn() > 0) {
                 throw new \InvalidArgumentException(
-                    'reorderItems: only top-level (parent_id IS NULL) IDs may be reordered in the news section'
+                    'reorderItems: only top-level news section IDs may be reordered via this path'
                 );
             }
         }
@@ -463,10 +475,11 @@ class Database
             'UPDATE items SET talking_points = :talking_points WHERE id = :id'
         )->execute([':talking_points' => $talkingPoints, ':id' => $id]);
 
-        $rowStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
-        $rowStmt->execute([':id' => $id]);
+        // No trigger can transform talking_points, so we can return the row we
+        // already have rather than issuing a third SELECT round-trip.
+        $item['talking_points'] = $talkingPoints;
 
-        return $rowStmt->fetch();
+        return $item;
     }
 
     /**
@@ -528,13 +541,23 @@ class Database
                 }
             }
 
-            // Compute next sort_order among all of $targetId's current secondaries
-            // (which now includes any re-parented children from above).
-            $maxStmt = $this->pdo->prepare(
-                'SELECT COALESCE(MAX(sort_order) + 1, 0) FROM items WHERE parent_id = :target_id'
+            // Resequence all current secondaries of $targetId (including any just re-parented)
+            // so their sort_orders are contiguous from 0 with no collisions before we append.
+            $existingStmt = $this->pdo->prepare(
+                'SELECT id FROM items WHERE parent_id = :target_id ORDER BY sort_order ASC'
             );
-            $maxStmt->execute([':target_id' => $targetId]);
-            $nextOrder = (int) $maxStmt->fetchColumn();
+            $existingStmt->execute([':target_id' => $targetId]);
+            $existingIds = $existingStmt->fetchAll(\PDO::FETCH_COLUMN);
+
+            $reseqStmt = $this->pdo->prepare(
+                'UPDATE items SET sort_order = :order WHERE id = :id'
+            );
+            foreach ($existingIds as $pos => $eid) {
+                $reseqStmt->execute([':order' => $pos, ':id' => $eid]);
+            }
+
+            // Next available slot is simply the count of existing secondaries.
+            $nextOrder = count($existingIds);
 
             $this->pdo->prepare(
                 'UPDATE items SET parent_id = :parent_id, sort_order = :sort_order WHERE id = :id'
@@ -683,17 +706,8 @@ class Database
      */
     public function getItemsFlat(): array
     {
-        $vulnStmt = $this->pdo->prepare(
-            "SELECT id, section, url, title, author_name, author_url, sort_order,
-                    COALESCE(talking_points, '') AS talking_points, parent_id
-             FROM items
-             WHERE section = 'vulnerability'
-             ORDER BY sort_order ASC"
-        );
-        $vulnStmt->execute();
-
         return [
-            'vulnerability' => $vulnStmt->fetchAll(),
+            'vulnerability' => $this->fetchVulnerabilityItems(),
             'news'          => $this->fetchNewsItemsOrdered(),
         ];
     }

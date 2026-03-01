@@ -18,7 +18,8 @@ return [
                         . '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'max_redirects'    => 5,
 
-    // WebSocket server address; localhost-only by design — never expose to 0.0.0.0
+    // WebSocket server address; bound to all interfaces so LAN clients can connect.
+    // Change to '127.0.0.1' to restrict to localhost only.
     'ws_host' => '0.0.0.0',
     'ws_port' => 9001,
 ];
