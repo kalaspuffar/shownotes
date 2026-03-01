@@ -1647,10 +1647,11 @@ const wsClientModule = (() => {
    Exposes: start(), exit(), buildRunOrder(appState)
    ---------------------------------------------------------- */
 const recordingModule = (() => {
-    let runOrder     = [];
-    let currentIndex = 0;
-    let audienceWindow = null;
-    let keyHandler   = null;
+    let runOrder            = [];
+    let currentIndex        = 0;
+    let audienceWindow      = null;
+    let keyHandler          = null;
+    let audienceCheckInterval = null;
 
     /* ---- Run order ---- */
 
@@ -1705,8 +1706,12 @@ const recordingModule = (() => {
         currentIndex = index;
         const entry  = runOrder[index];
         renderHostView(entry);
-        if (entry.type === 'item') {
-            wsClientModule.sendNavigate(entry.item);
+        if (entry.type === 'item' && audienceWindow && !audienceWindow.closed) {
+            try {
+                audienceWindow.location.href = entry.item.url;
+            } catch (e) {
+                console.error('[recording] Failed to navigate audience window:', e);
+            }
         }
     }
 
@@ -1791,20 +1796,20 @@ const recordingModule = (() => {
         if (nextBtn) nextBtn.disabled = currentIndex === runOrder.length - 1;
     }
 
-    /* ---- WS status indicator ---- */
+    /* ---- Audience window status indicator ---- */
 
-    function updateWsIndicator(connected) {
+    function updateAudienceIndicator(isOpen) {
         const hostView = document.getElementById('host-view');
         if (!hostView) return;
         const dot  = hostView.querySelector('.hv-ws-indicator');
         const text = hostView.querySelector('.hv-ws-text');
         if (!dot || !text) return;
-        if (connected) {
+        if (isOpen) {
             dot.classList.add('connected');
-            text.textContent = 'WS: Connected';
+            text.textContent = 'Audience: Open';
         } else {
             dot.classList.remove('connected');
-            text.textContent = 'WS: Disconnected';
+            text.textContent = 'Audience: Closed';
         }
     }
 
@@ -1816,7 +1821,7 @@ const recordingModule = (() => {
             <div class="hv-topbar">
                 <div class="hv-topbar__left">
                     <span class="hv-ws-indicator" aria-hidden="true"></span>
-                    <span class="hv-ws-text">Connecting…</span>
+                    <span class="hv-ws-text">Audience: Open</span>
                 </div>
                 <div class="hv-topbar__center">
                     <button class="hv-exit-btn" type="button" id="hv-btn-exit">Exit Recording</button>
@@ -1850,40 +1855,6 @@ const recordingModule = (() => {
         });
     }
 
-    /* ---- WS warning panel (shown pre-recording-mode) ---- */
-
-    function showWsWarning() {
-        return new Promise(resolve => {
-            const panel = document.createElement('div');
-            panel.id = 'ws-warning';
-            panel.setAttribute('role', 'dialog');
-            panel.setAttribute('aria-modal', 'true');
-            panel.setAttribute('aria-label', 'WebSocket server offline');
-            panel.innerHTML = `
-                <p><strong>⚠ WebSocket server is not reachable.</strong></p>
-                <p>Audience sync will be unavailable. Start the server with:<br>
-                   <code>php bin/ws-server.php</code></p>
-                <div class="ws-warning__actions">
-                    <button type="button" id="ws-warning-continue"
-                            class="btn-recording">Continue without sync</button>
-                    <button type="button" id="ws-warning-cancel">Cancel</button>
-                </div>
-            `;
-            document.body.appendChild(panel);
-
-            panel.querySelector('#ws-warning-continue').addEventListener('click', () => {
-                panel.remove();
-                resolve(true);
-            });
-            panel.querySelector('#ws-warning-cancel').addEventListener('click', () => {
-                panel.remove();
-                resolve(false);
-            });
-
-            panel.querySelector('#ws-warning-continue').focus();
-        });
-    }
-
     /* ---- Popup blocked inline message ---- */
 
     function showPopupBlockedMessage() {
@@ -1905,57 +1876,28 @@ const recordingModule = (() => {
 
     /* ---- Entry and exit flow ---- */
 
-    async function start() {
+    function start() {
         const btn = document.getElementById('btn-start-recording');
         btn.disabled = true;
 
-        // 1. Attempt WS connection; wait up to 1 second for open
-        wsClientModule.connect();
-        const wsConnected = await new Promise(resolve => {
-            let done = false;
-
-            const timer = setTimeout(() => {
-                if (!done) { done = true; resolve(false); }
-            }, 1000);
-
-            // onStatusChange fires immediately with current status (false),
-            // then again on open (true). Only resolve true on a connected event.
-            wsClientModule.onStatusChange(connected => {
-                if (connected && !done) {
-                    done = true;
-                    clearTimeout(timer);
-                    resolve(true);
-                }
-            });
-        });
-
-        // 2. If WS offline, present inline warning and wait for user decision
-        if (!wsConnected) {
-            const proceed = await showWsWarning();
-            if (!proceed) {
-                wsClientModule.disconnect();
-                btn.disabled = false;
-                updateStartRecordingButton();
-                return;
-            }
-        }
-
-        // 3. Open audience window (popup blocked → abort with inline message)
+        // 1. Open audience window (popup blocked → abort with inline message)
         audienceWindow = openAudienceWindow();
         if (!audienceWindow) {
             showPopupBlockedMessage();
-            wsClientModule.disconnect();
             btn.disabled = false;
             updateStartRecordingButton();
             return;
         }
 
-        // 4. Enter recording mode
+        // 2. Enter recording mode
         buildHostViewHTML();
         runOrder = buildRunOrder(state);
 
-        // Subscribe WS status to the in-view indicator from this point on
-        wsClientModule.onStatusChange(updateWsIndicator);
+        // Poll audience window open/closed state every second
+        updateAudienceIndicator(true);
+        audienceCheckInterval = setInterval(() => {
+            updateAudienceIndicator(audienceWindow && !audienceWindow.closed);
+        }, 1000);
 
         document.body.classList.add('recording-mode');
 
@@ -1973,7 +1915,11 @@ const recordingModule = (() => {
             keyHandler = null;
         }
 
-        wsClientModule.disconnect();
+        if (audienceCheckInterval) {
+            clearInterval(audienceCheckInterval);
+            audienceCheckInterval = null;
+        }
+
         closeAudienceWindow();
 
         const btn = document.getElementById('btn-start-recording');
