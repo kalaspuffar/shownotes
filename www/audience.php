@@ -252,6 +252,7 @@ const WS_PORT = <?= (int)$config['ws_port'] ?>;
 
     iframe.addEventListener('load', () => {
         clearTimeout(fallbackTimer);
+        clearTimeout(fallbackFadeTimer);
         loadingBar.style.display = 'none';
     });
 
