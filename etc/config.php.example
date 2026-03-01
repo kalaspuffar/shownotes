@@ -18,8 +18,13 @@ return [
                         . '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'max_redirects'    => 5,
 
-    // WebSocket server address; bound to all interfaces so LAN clients can connect.
-    // Change to '127.0.0.1' to restrict to localhost only.
-    'ws_host' => '0.0.0.0',
+    // WebSocket server bind address — localhost only (see SPECIFICATION-RECORDING.md §11.1).
+    // Do NOT change to '0.0.0.0'; that would expose the unauthenticated WS server on the LAN.
+    'ws_host' => '127.0.0.1',
+
+    // Hostname the browser uses to reach the WebSocket server.
+    // For local use, 'localhost' or '127.0.0.1' is correct.
+    // MUST be updated before deploying to a remote host.
+    'ws_domain' => 'localhost',
     'ws_port' => 9001,
 ];

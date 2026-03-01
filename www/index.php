@@ -14,6 +14,7 @@ $state = [
         'show_title'  => $config['show_title'],
         'show_tagline' => $config['show_tagline'],
         'sections'    => $config['sections'],
+        'ws_domain'     => $config['ws_domain'],
         'ws_port'     => (int) $config['ws_port'],
     ],
 ];

@@ -1566,6 +1566,427 @@ const talkingPointsModule = (() => {
 })();
 
 /* ----------------------------------------------------------
+   wsClientModule
+   Manages the WebSocket connection to the recording server.
+   Exposes: connect(), disconnect(), sendNavigate(item), onStatusChange(cb)
+   ---------------------------------------------------------- */
+const wsClientModule = (() => {
+    const WS_URL = `ws://${INITIAL_STATE.config.ws_domain}:${INITIAL_STATE.config.ws_port}`;
+
+    let ws              = null;
+    let statusCallback  = null;
+    let reconnectTimer  = null;
+    let intentionalClose = false;
+    let isConnected     = false;
+
+    function connect() {
+        intentionalClose = false;
+        clearTimeout(reconnectTimer);
+        try {
+            ws = new WebSocket(WS_URL);
+
+            ws.addEventListener('open', () => {
+                isConnected = true;
+                try { ws.send(JSON.stringify({ action: 'hello', role: 'host' })); } catch {}
+                if (statusCallback) statusCallback(true);
+            });
+
+            ws.addEventListener('close', () => {
+                isConnected = false;
+                if (statusCallback) statusCallback(false);
+                // Auto-reconnect only on unexpected close
+                if (!intentionalClose) {
+                    reconnectTimer = setTimeout(connect, 3000);
+                }
+            });
+
+            ws.addEventListener('error', (e) => {
+                console.error('[wsClientModule] WebSocket error', e);
+            });
+        } catch (e) {
+            console.error('[wsClientModule] Failed to create WebSocket', e);
+        }
+    }
+
+    function disconnect() {
+        intentionalClose = true;
+        clearTimeout(reconnectTimer);
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+        isConnected = false;
+    }
+
+    function sendNavigate(item) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        try {
+            ws.send(JSON.stringify({
+                action:  'navigate',
+                itemId:  item.id,
+                url:     item.url,
+                title:   item.title,
+                section: item.section,
+            }));
+        } catch {}
+    }
+
+    /* Register a status callback; fires immediately with current state */
+    function onStatusChange(cb) {
+        statusCallback = cb;
+        cb(isConnected);
+    }
+
+    return { connect, disconnect, sendNavigate, onStatusChange };
+})();
+
+/* ----------------------------------------------------------
+   recordingModule
+   Manages recording mode: run order, host view, keyboard nav,
+   audience window lifecycle, and WS status indicator.
+   Exposes: start(), exit(), buildRunOrder(appState)
+   ---------------------------------------------------------- */
+const recordingModule = (() => {
+    let runOrder     = [];
+    let currentIndex = 0;
+    let audienceWindow = null;
+    let keyHandler   = null;
+
+    /* ---- Run order ---- */
+
+    function buildRunOrder(appState) {
+        const vulnItems = (appState.items.vulnerability || [])
+            .slice()
+            .sort((a, b) => a.sort_order - b.sort_order);
+
+        // Only primary/standalone news items (parent_id === null) are navigation stops
+        const newsItems = (appState.items.news || [])
+            .filter(item => item.parent_id === null)
+            .sort((a, b) => a.sort_order - b.sort_order);
+
+        const order = [];
+
+        for (const item of vulnItems) {
+            order.push({ type: 'item', item, segment: 'vulnerability' });
+        }
+
+        // Segment break only when both sections have at least one item
+        if (vulnItems.length > 0 && newsItems.length > 0) {
+            order.push({ type: 'segment_break', segment: 'news' });
+        }
+
+        for (const item of newsItems) {
+            order.push({ type: 'item', item, segment: 'news' });
+        }
+
+        return order;
+    }
+
+    /* ---- Audience window ---- */
+
+    function openAudienceWindow() {
+        return window.open(
+            '/audience.php',
+            'cncAudienceWindow',
+            `width=${screen.availWidth},height=${screen.availHeight},left=0,top=0,menubar=no,toolbar=no,status=no,resizable=yes`
+        );
+    }
+
+    function closeAudienceWindow() {
+        if (audienceWindow && !audienceWindow.closed) {
+            audienceWindow.close();
+        }
+        audienceWindow = null;
+    }
+
+    /* ---- Navigation ---- */
+
+    function navigate(index) {
+        currentIndex = index;
+        const entry  = runOrder[index];
+        renderHostView(entry);
+        if (entry.type === 'item') {
+            wsClientModule.sendNavigate(entry.item);
+        }
+    }
+
+    /* ---- Keyboard handler ---- */
+
+    function handleRecordingKey(e) {
+        switch (e.key) {
+            case 'ArrowRight':
+                if (currentIndex < runOrder.length - 1) navigate(currentIndex + 1);
+                break;
+            case ' ':
+                e.preventDefault();
+                if (currentIndex < runOrder.length - 1) navigate(currentIndex + 1);
+                break;
+            case 'ArrowLeft':
+                if (currentIndex > 0) navigate(currentIndex - 1);
+                break;
+            case 'Home':
+                navigate(0);
+                break;
+            case 'End':
+                navigate(runOrder.length - 1);
+                break;
+            case 'Escape':
+                exit();
+                break;
+        }
+    }
+
+    /* ---- Host view rendering ---- */
+
+    function renderHostView(entry) {
+        const hostView      = document.getElementById('host-view');
+        const contentEl     = hostView.querySelector('.hv-content');
+        const segBreakEl    = hostView.querySelector('.hv-segment-break');
+        const counterEl     = hostView.querySelector('.hv-nav-counter');
+        const prevBtn       = hostView.querySelector('#hv-btn-prev');
+        const nextBtn       = hostView.querySelector('#hv-btn-next');
+        const totalItems    = runOrder.filter(e => e.type === 'item').length;
+
+        if (entry.type === 'segment_break') {
+            counterEl.textContent    = 'Segment break';
+            contentEl.style.display  = 'none';
+            segBreakEl.style.display = 'flex';
+        } else {
+            // Count how many item entries we have reached (1-indexed)
+            let itemNumber = 0;
+            for (let i = 0; i <= currentIndex; i++) {
+                if (runOrder[i].type === 'item') itemNumber++;
+            }
+            counterEl.textContent = `Item ${itemNumber} of ${totalItems}`;
+
+            contentEl.style.display  = '';
+            segBreakEl.style.display = 'none';
+
+            const item = entry.item;
+            contentEl.querySelector('.hv-segment-label').textContent =
+                (entry.segment || '').toUpperCase();
+            contentEl.querySelector('.hv-title').textContent  = item.title || '';
+            contentEl.querySelector('.hv-url').textContent    = item.url   || '';
+
+            const tpContainer = contentEl.querySelector('.hv-talking-points');
+            const points = item.talking_points
+                ? item.talking_points.split('\n').filter(p => p.trim())
+                : [];
+
+            if (points.length > 0) {
+                tpContainer.style.display = '';
+                const ul = tpContainer.querySelector('ul');
+                ul.innerHTML = '';
+                for (const point of points) {
+                    const li = document.createElement('li');
+                    li.textContent = point;
+                    ul.appendChild(li);
+                }
+            } else {
+                tpContainer.style.display = 'none';
+            }
+        }
+
+        if (prevBtn) prevBtn.disabled = currentIndex === 0;
+        if (nextBtn) nextBtn.disabled = currentIndex === runOrder.length - 1;
+    }
+
+    /* ---- WS status indicator ---- */
+
+    function updateWsIndicator(connected) {
+        const hostView = document.getElementById('host-view');
+        if (!hostView) return;
+        const dot  = hostView.querySelector('.hv-ws-indicator');
+        const text = hostView.querySelector('.hv-ws-text');
+        if (!dot || !text) return;
+        if (connected) {
+            dot.classList.add('connected');
+            text.textContent = 'WS: Connected';
+        } else {
+            dot.classList.remove('connected');
+            text.textContent = 'WS: Disconnected';
+        }
+    }
+
+    /* ---- Build host view DOM ---- */
+
+    function buildHostViewHTML() {
+        const hostView = document.getElementById('host-view');
+        hostView.innerHTML = `
+            <div class="hv-topbar">
+                <div class="hv-topbar__left">
+                    <span class="hv-ws-indicator" aria-hidden="true"></span>
+                    <span class="hv-ws-text">Connecting…</span>
+                </div>
+                <div class="hv-topbar__center">
+                    <button class="hv-exit-btn" type="button" id="hv-btn-exit">Exit Recording</button>
+                </div>
+                <div class="hv-topbar__right">
+                    <span class="hv-nav-counter" aria-live="polite"></span>
+                </div>
+            </div>
+            <div class="hv-content">
+                <div class="hv-segment-label" aria-label="Section"></div>
+                <h2 class="hv-title"></h2>
+                <div class="hv-url"></div>
+                <div class="hv-talking-points"><ul></ul></div>
+            </div>
+            <div class="hv-segment-break" style="display:none">
+                <div class="hv-segment-break__word" aria-label="Segment break: News">NEWS</div>
+                <div class="hv-segment-break__hint">← press Next to continue →</div>
+            </div>
+            <div class="hv-nav-bar">
+                <button class="hv-nav-btn" id="hv-btn-prev" type="button">← Prev</button>
+                <button class="hv-nav-btn" id="hv-btn-next" type="button">Next →</button>
+            </div>
+        `;
+
+        hostView.querySelector('#hv-btn-exit').addEventListener('click', exit);
+        hostView.querySelector('#hv-btn-prev').addEventListener('click', () => {
+            if (currentIndex > 0) navigate(currentIndex - 1);
+        });
+        hostView.querySelector('#hv-btn-next').addEventListener('click', () => {
+            if (currentIndex < runOrder.length - 1) navigate(currentIndex + 1);
+        });
+    }
+
+    /* ---- WS warning panel (shown pre-recording-mode) ---- */
+
+    function showWsWarning() {
+        return new Promise(resolve => {
+            const panel = document.createElement('div');
+            panel.id = 'ws-warning';
+            panel.setAttribute('role', 'dialog');
+            panel.setAttribute('aria-modal', 'true');
+            panel.setAttribute('aria-label', 'WebSocket server offline');
+            panel.innerHTML = `
+                <p><strong>⚠ WebSocket server is not reachable.</strong></p>
+                <p>Audience sync will be unavailable. Start the server with:<br>
+                   <code>php bin/ws-server.php</code></p>
+                <div class="ws-warning__actions">
+                    <button type="button" id="ws-warning-continue"
+                            class="btn-recording">Continue without sync</button>
+                    <button type="button" id="ws-warning-cancel">Cancel</button>
+                </div>
+            `;
+            document.body.appendChild(panel);
+
+            panel.querySelector('#ws-warning-continue').addEventListener('click', () => {
+                panel.remove();
+                resolve(true);
+            });
+            panel.querySelector('#ws-warning-cancel').addEventListener('click', () => {
+                panel.remove();
+                resolve(false);
+            });
+
+            panel.querySelector('#ws-warning-continue').focus();
+        });
+    }
+
+    /* ---- Popup blocked inline message ---- */
+
+    function showPopupBlockedMessage() {
+        const existing = document.getElementById('popup-blocked-msg');
+        if (existing) existing.remove();
+
+        const msg = document.createElement('p');
+        msg.id = 'popup-blocked-msg';
+        msg.setAttribute('role', 'alert');
+        msg.style.cssText =
+            'color:var(--color-danger);padding:8px var(--spacing-lg);font-size:0.9rem;margin:0;';
+        msg.textContent =
+            'Popup blocked — please allow popups for this page, then try again.';
+
+        const actionBar = document.getElementById('action-bar');
+        if (actionBar) actionBar.insertAdjacentElement('afterend', msg);
+        setTimeout(() => msg.remove(), 6000);
+    }
+
+    /* ---- Entry and exit flow ---- */
+
+    async function start() {
+        const btn = document.getElementById('btn-start-recording');
+        btn.disabled = true;
+
+        // 1. Attempt WS connection; wait up to 1 second for open
+        wsClientModule.connect();
+        const wsConnected = await new Promise(resolve => {
+            let done = false;
+
+            const timer = setTimeout(() => {
+                if (!done) { done = true; resolve(false); }
+            }, 1000);
+
+            // onStatusChange fires immediately with current status (false),
+            // then again on open (true). Only resolve true on a connected event.
+            wsClientModule.onStatusChange(connected => {
+                if (connected && !done) {
+                    done = true;
+                    clearTimeout(timer);
+                    resolve(true);
+                }
+            });
+        });
+
+        // 2. If WS offline, present inline warning and wait for user decision
+        if (!wsConnected) {
+            const proceed = await showWsWarning();
+            if (!proceed) {
+                wsClientModule.disconnect();
+                btn.disabled = false;
+                updateStartRecordingButton();
+                return;
+            }
+        }
+
+        // 3. Open audience window (popup blocked → abort with inline message)
+        audienceWindow = openAudienceWindow();
+        if (!audienceWindow) {
+            showPopupBlockedMessage();
+            wsClientModule.disconnect();
+            btn.disabled = false;
+            updateStartRecordingButton();
+            return;
+        }
+
+        // 4. Enter recording mode
+        buildHostViewHTML();
+        runOrder = buildRunOrder(state);
+
+        // Subscribe WS status to the in-view indicator from this point on
+        wsClientModule.onStatusChange(updateWsIndicator);
+
+        document.body.classList.add('recording-mode');
+
+        keyHandler = handleRecordingKey;
+        document.addEventListener('keydown', keyHandler);
+
+        navigate(0);
+    }
+
+    function exit() {
+        document.body.classList.remove('recording-mode');
+
+        if (keyHandler) {
+            document.removeEventListener('keydown', keyHandler);
+            keyHandler = null;
+        }
+
+        wsClientModule.disconnect();
+        closeAudienceWindow();
+
+        const btn = document.getElementById('btn-start-recording');
+        if (btn) {
+            btn.disabled = false;
+            updateStartRecordingButton();
+        }
+    }
+
+    return { start, exit, buildRunOrder };
+})();
+
+/* ----------------------------------------------------------
    Initialise on DOMContentLoaded
    ---------------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -1590,6 +2011,12 @@ document.addEventListener('DOMContentLoaded', () => {
     bindGenerateButton();
     bindCopyButton();
     bindNewEpisodeButton();
+
+    // Wire "Start Recording" button to recordingModule
+    const btnStartRecording = document.getElementById('btn-start-recording');
+    if (btnStartRecording) {
+        btnStartRecording.addEventListener('click', () => recordingModule.start());
+    }
 
     // Ensure buttons start in correct disabled state
     updateAddButtonState();
