@@ -1566,81 +1566,6 @@ const talkingPointsModule = (() => {
 })();
 
 /* ----------------------------------------------------------
-   wsClientModule
-   Manages the WebSocket connection to the recording server.
-   Exposes: connect(), disconnect(), sendNavigate(item), onStatusChange(cb)
-   ---------------------------------------------------------- */
-const wsClientModule = (() => {
-    const WS_URL = `ws://${INITIAL_STATE.config.ws_domain}:${INITIAL_STATE.config.ws_port}`;
-
-    let ws              = null;
-    let statusCallback  = null;
-    let reconnectTimer  = null;
-    let intentionalClose = false;
-    let isConnected     = false;
-
-    function connect() {
-        intentionalClose = false;
-        clearTimeout(reconnectTimer);
-        try {
-            ws = new WebSocket(WS_URL);
-
-            ws.addEventListener('open', () => {
-                isConnected = true;
-                try { ws.send(JSON.stringify({ action: 'hello', role: 'host' })); } catch {}
-                if (statusCallback) statusCallback(true);
-            });
-
-            ws.addEventListener('close', () => {
-                isConnected = false;
-                if (statusCallback) statusCallback(false);
-                // Auto-reconnect only on unexpected close
-                if (!intentionalClose) {
-                    reconnectTimer = setTimeout(connect, 3000);
-                }
-            });
-
-            ws.addEventListener('error', (e) => {
-                console.error('[wsClientModule] WebSocket error', e);
-            });
-        } catch (e) {
-            console.error('[wsClientModule] Failed to create WebSocket', e);
-        }
-    }
-
-    function disconnect() {
-        intentionalClose = true;
-        clearTimeout(reconnectTimer);
-        if (ws) {
-            ws.close();
-            ws = null;
-        }
-        isConnected = false;
-    }
-
-    function sendNavigate(item) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        try {
-            ws.send(JSON.stringify({
-                action:  'navigate',
-                itemId:  item.id,
-                url:     item.url,
-                title:   item.title,
-                section: item.section,
-            }));
-        } catch {}
-    }
-
-    /* Register a status callback; fires immediately with current state */
-    function onStatusChange(cb) {
-        statusCallback = cb;
-        cb(isConnected);
-    }
-
-    return { connect, disconnect, sendNavigate, onStatusChange };
-})();
-
-/* ----------------------------------------------------------
    recordingModule
    Manages recording mode: run order, host view, keyboard nav,
    audience window lifecycle, and WS status indicator.
@@ -1651,7 +1576,7 @@ const recordingModule = (() => {
     let currentIndex        = 0;
     let audienceWindow      = null;
     let keyHandler          = null;
-    let audienceCheckInterval = null;
+    let audienceWindowPollInterval = null;
 
     /* ---- Run order ---- */
 
@@ -1702,11 +1627,39 @@ const recordingModule = (() => {
 
     /* ---- Navigation ---- */
 
+    /**
+     * Blocks navigation to non-http(s) URLs and private/loopback IP ranges.
+     * Defence-in-depth: item URLs come from the DB, but a corrupted row or
+     * future code path could still produce a harmful URL.
+     */
+    function isNavigableUrl(url) {
+        try {
+            const { protocol, hostname } = new URL(url);
+            if (!['http:', 'https:'].includes(protocol)) return false;
+            const privateRanges = [
+                /^127\./,
+                /^10\./,
+                /^172\.(1[6-9]|2\d|3[01])\./,
+                /^192\.168\./,
+                /^::1$/,
+                /^localhost$/i,
+                /^0\.0\.0\.0$/,
+            ];
+            return !privateRanges.some(re => re.test(hostname));
+        } catch {
+            return false;
+        }
+    }
+
     function navigate(index) {
         currentIndex = index;
         const entry  = runOrder[index];
         renderHostView(entry);
         if (entry.type === 'item' && audienceWindow && !audienceWindow.closed) {
+            if (!isNavigableUrl(entry.item.url)) {
+                console.warn('[recording] Blocked navigation to unsafe URL:', entry.item.url);
+                return;
+            }
             try {
                 audienceWindow.location.href = entry.item.url;
             } catch (e) {
@@ -1821,7 +1774,7 @@ const recordingModule = (() => {
             <div class="hv-topbar">
                 <div class="hv-topbar__left">
                     <span class="hv-ws-indicator" aria-hidden="true"></span>
-                    <span class="hv-ws-text">Audience: Open</span>
+                    <span class="hv-ws-text"></span>
                 </div>
                 <div class="hv-topbar__center">
                     <button class="hv-exit-btn" type="button" id="hv-btn-exit">Exit Recording</button>
@@ -1893,9 +1846,9 @@ const recordingModule = (() => {
         buildHostViewHTML();
         runOrder = buildRunOrder(state);
 
-        // Poll audience window open/closed state every second
-        updateAudienceIndicator(true);
-        audienceCheckInterval = setInterval(() => {
+        // Drive indicator from real state immediately, then keep polling every second
+        updateAudienceIndicator(audienceWindow && !audienceWindow.closed);
+        audienceWindowPollInterval = setInterval(() => {
             updateAudienceIndicator(audienceWindow && !audienceWindow.closed);
         }, 1000);
 
@@ -1915,9 +1868,9 @@ const recordingModule = (() => {
             keyHandler = null;
         }
 
-        if (audienceCheckInterval) {
-            clearInterval(audienceCheckInterval);
-            audienceCheckInterval = null;
+        if (audienceWindowPollInterval) {
+            clearInterval(audienceWindowPollInterval);
+            audienceWindowPollInterval = null;
         }
 
         closeAudienceWindow();

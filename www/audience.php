@@ -19,6 +19,7 @@ declare(strict_types=1);
             background: #1a1a2e;
             color: #8892a4;
             font-family: system-ui, -apple-system, sans-serif;
+            overflow: hidden;   /* prevent scrollbar on waiting screen */
         }
 
         #waiting-msg {
