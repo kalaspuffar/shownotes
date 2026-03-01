@@ -972,3 +972,243 @@ ul.author-suggest-list {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
 }
+
+/* ============================================================
+   Recording Mode — Host View
+   ============================================================ */
+
+/* Hide prep UI entirely during recording */
+body.recording-mode .prep-ui {
+    display: none !important;
+}
+
+/* Host View: full-screen dark overlay — only visible in recording mode */
+body.recording-mode #host-view {
+    display: flex !important;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    background: var(--color-recording-bg);
+    color: var(--color-recording-text);
+}
+
+/* Top bar: left (WS status) | center (counter) | right (exit) */
+.hv-topbar {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.hv-topbar__left,
+.hv-topbar__right {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+/* WebSocket status dot */
+.hv-ws-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--color-ws-disconnected);
+    transition: background-color 0.3s;
+}
+
+.hv-ws-indicator.connected {
+    background-color: var(--color-ws-connected);
+}
+
+/* WS status label */
+.hv-ws-text {
+    font-size: 13px;
+    color: var(--color-recording-muted);
+    white-space: nowrap;
+}
+
+/* Exit button — glass style */
+.hv-exit-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: var(--color-recording-text);
+    padding: 6px var(--spacing-md);
+    border-radius: var(--radius);
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.hv-exit-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Navigation counter */
+.hv-nav-counter {
+    font-size: 14px;
+    color: var(--color-recording-muted);
+    white-space: nowrap;
+}
+
+/* Content area — scrollable, centred, max-width */
+.hv-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: var(--spacing-lg);
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* Section label above title */
+.hv-segment-label {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--color-recording-muted);
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Item title */
+.hv-title {
+    font-size: 28px;
+    font-weight: bold;
+    line-height: 1.3;
+    margin: 0 0 var(--spacing-md);
+    color: var(--color-recording-text);
+}
+
+/* Item URL */
+.hv-url {
+    font-size: 14px;
+    color: var(--color-recording-muted);
+    word-break: break-all;
+    margin-bottom: var(--spacing-md);
+}
+
+/* Talking points list — large bullets with accent colour marker */
+.hv-talking-points ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.hv-talking-points li {
+    font-size: 22px;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+    color: var(--color-recording-text);
+}
+
+.hv-talking-points li::before {
+    content: '●';
+    color: var(--color-recording-accent);
+    flex-shrink: 0;
+    line-height: 1.5;
+}
+
+/* Bottom nav bar */
+.hv-nav-bar {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+/* Prev / Next buttons */
+.hv-nav-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--color-recording-text);
+    padding: var(--spacing-md) var(--spacing-lg);
+    min-width: 140px;
+    border-radius: var(--radius);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.hv-nav-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.hv-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Segment break screen — centred large word with hint */
+.hv-segment-break {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.hv-segment-break__word {
+    font-size: 96px;
+    font-weight: bold;
+    color: var(--color-recording-accent);
+    line-height: 1;
+}
+
+.hv-segment-break__hint {
+    font-size: 16px;
+    color: var(--color-recording-muted);
+    margin-top: var(--spacing-md);
+}
+
+/* WS warning panel — amber tint, shown before/during recording start */
+#ws-warning {
+    background: rgba(192, 122, 43, 0.12);
+    border: 1px solid rgba(192, 122, 43, 0.7);
+    border-radius: var(--radius);
+    padding: var(--spacing-md);
+    max-width: 480px;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2000;
+    color: var(--color-text);
+    background-color: var(--color-surface);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+#ws-warning p {
+    margin: 0 0 var(--spacing-sm);
+    font-size: 0.9rem;
+}
+
+#ws-warning code {
+    font-family: var(--font-mono);
+    background: rgba(0, 0, 0, 0.08);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.ws-warning__actions {
+    display: flex;
+    flex-direction: row;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+}
