@@ -20,6 +20,7 @@ return [
 
     // WebSocket server address; bound to all interfaces so LAN clients can connect.
     // Change to '127.0.0.1' to restrict to localhost only.
+    'ws_domain' => 'domain-to-connect-to-using-javascript',
     'ws_host' => '0.0.0.0',
     'ws_port' => 9001,
 ];

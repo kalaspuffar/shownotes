@@ -1571,7 +1571,7 @@ const talkingPointsModule = (() => {
    Exposes: connect(), disconnect(), sendNavigate(item), onStatusChange(cb)
    ---------------------------------------------------------- */
 const wsClientModule = (() => {
-    const WS_URL = `ws://127.0.0.1:${INITIAL_STATE.config.ws_port}`;
+    const WS_URL = `ws://${INITIAL_STATE.config.ws_domain}:${INITIAL_STATE.config.ws_port}`;
 
     let ws              = null;
     let statusCallback  = null;

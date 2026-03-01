@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-require_once '../etc/config.php';
+$config = require __DIR__ . '/../etc/config.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -137,12 +137,13 @@ require_once '../etc/config.php';
 <div id="disconnect-dot" hidden aria-label="Disconnected from host"></div>
 
 <script>
+const WS_DOMAIN = '<?= $config['ws_domain'] ?>';
 const WS_PORT = <?= (int)$config['ws_port'] ?>;
 
 (function () {
     'use strict';
 
-    const WS_URL        = `ws://127.0.0.1:${WS_PORT}`;
+    const WS_URL        = `ws://${WS_DOMAIN}:${WS_PORT}`;
     const iframe        = document.getElementById('audience-iframe');
     const waitingMsg    = document.getElementById('waiting-msg');
     const loadingBar    = document.getElementById('loading-bar');
