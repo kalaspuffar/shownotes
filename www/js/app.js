@@ -20,11 +20,18 @@ const state = {
 // cross-section drops before the drop event fires.
 let dragSourceSection = null;
 
+// Tracks the parent_id of the item currently being dragged.
+// null  → top-level primary or standalone item
+// <int> → secondary item; value is its parent primary's ID
+// Used by the group-level dragover handler to route same-group reorders
+// to reorder_group instead of letting them bubble up to extract_item.
+let dragSourceParentId = null;
+
 /* ----------------------------------------------------------
    10.2 — apiCall(action, payload)
    Single AJAX boundary for all server communication.
    ---------------------------------------------------------- */
-async function apiCall(action, payload = {}) {
+async function apiCall(action, payload = {}, options = {}) {
     const body = JSON.stringify({ action, ...payload });
 
     let response;
@@ -46,6 +53,9 @@ async function apiCall(action, payload = {}) {
         showToast('error', 'Server returned an unexpected response.');
         throw new Error('Non-JSON response from server');
     }
+
+    // raw: true bypasses the success check — caller handles the full response object.
+    if (options.raw) return json;
 
     if (!json.success) {
         const message = json.error || 'An unknown error occurred.';
@@ -86,6 +96,75 @@ function showToast(type, message) {
     container.appendChild(toast);
 
     setTimeout(() => toast.remove(), 4000);
+}
+
+/* ----------------------------------------------------------
+   showConfirmDialog({ title, body, cancelLabel, confirmLabel })
+   Renders a spec-compliant .modal-backdrop > .modal-dialog and
+   returns a Promise that resolves to true (confirm) or false (cancel).
+   ---------------------------------------------------------- */
+function showConfirmDialog({ title, body, cancelLabel, confirmLabel }) {
+    return new Promise((resolve) => {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.setAttribute('role', 'dialog');
+        backdrop.setAttribute('aria-modal', 'true');
+        backdrop.setAttribute('aria-labelledby', 'modal-heading');
+
+        const dialog = document.createElement('div');
+        dialog.className = 'modal-dialog';
+
+        const heading = document.createElement('h2');
+        heading.id = 'modal-heading';
+        heading.textContent = title;
+
+        const bodyEl = document.createElement('p');
+        bodyEl.textContent = body;
+
+        const actions = document.createElement('div');
+        actions.className = 'modal-dialog__actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'modal-dialog__cancel';
+        cancelBtn.textContent = cancelLabel;
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'modal-dialog__confirm';
+        confirmBtn.textContent = confirmLabel;
+
+        function close(result) {
+            document.removeEventListener('keydown', onKeydown);
+            backdrop.remove();
+            resolve(result);
+        }
+
+        function onKeydown(e) {
+            if (e.key === 'Escape') close(false);
+        }
+
+        cancelBtn.addEventListener('click', () => close(false));
+        confirmBtn.addEventListener('click', () => close(true));
+
+        // Dismiss on backdrop click (outside dialog)
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) close(false);
+        });
+
+        document.addEventListener('keydown', onKeydown);
+
+        actions.appendChild(cancelBtn);
+        actions.appendChild(confirmBtn);
+        dialog.appendChild(heading);
+        dialog.appendChild(bodyEl);
+        dialog.appendChild(actions);
+        backdrop.appendChild(dialog);
+        document.body.appendChild(backdrop);
+
+        // Move focus into the dialog for keyboard accessibility
+        cancelBtn.focus();
+    });
 }
 
 /* ----------------------------------------------------------
@@ -133,6 +212,18 @@ function bindEpisodeMetaListeners() {
     });
 }
 
+/* ----------------------------------------------------------
+   updateStartRecordingButton()
+   Enables the "Start Recording" button when the episode has at
+   least one item; disables it when both sections are empty.
+   ---------------------------------------------------------- */
+function updateStartRecordingButton() {
+    const btn = document.getElementById('btn-start-recording');
+    if (!btn) return;
+    const hasItems = (state.items.vulnerability.length + state.items.news.length) > 0;
+    btn.disabled = !hasItems;
+}
+
 /* Status indicator helper */
 function setStatusIndicator(message, isError = false) {
     const el = document.getElementById('status-indicator');
@@ -167,7 +258,8 @@ function renderItem(item, section) {
     // setDragImage forces the browser to use the full item row as the ghost
     // image even though the drag source is just the small handle element.
     handle.addEventListener('dragstart', (e) => {
-        dragSourceSection = section; // captured at module scope for dragover guards
+        dragSourceSection  = section; // captured at module scope for dragover guards
+        dragSourceParentId = item.parent_id ?? null;
         e.dataTransfer.setData('text/plain', String(item.id));
         e.dataTransfer.effectAllowed = 'move';
         const rect = row.getBoundingClientRect();
@@ -180,7 +272,8 @@ function renderItem(item, section) {
     });
     handle.addEventListener('dragend', () => {
         row.classList.remove('dragging');
-        dragSourceSection = null;
+        dragSourceSection  = null;
+        dragSourceParentId = null;
     });
 
     const fieldsEl = document.createElement('div');
@@ -356,7 +449,13 @@ function renderVulnerabilityList() {
 }
 
 function renderNewsList() {
-    renderSectionList('news-list', state.items.news, 'news');
+    const container = document.getElementById('news-list');
+    if (!container) return;
+
+    // Remove all existing item rows and story-group containers; preserve the <h2> heading
+    container.querySelectorAll('.item-row, .story-group').forEach(el => el.remove());
+
+    container.appendChild(storyGroupModule.renderNewsSection(state.items.news));
 }
 
 function renderSectionList(containerId, items, section) {
@@ -381,12 +480,25 @@ async function handleDeleteItem(id, section) {
     try {
         await apiCall('delete_item', { id });
 
-        // Remove from state
+        // Remove deleted item from state
         state.items[section] = state.items[section].filter(i => i.id !== id);
+
+        // For news: promote any secondaries whose primary was just deleted to standalone
+        if (section === 'news') {
+            const survivingIds = new Set(state.items.news.map(i => i.id));
+            state.items.news = state.items.news.map(item => {
+                if (item.parent_id !== null && !survivingIds.has(item.parent_id)) {
+                    return { ...item, parent_id: null };
+                }
+                return item;
+            });
+        }
 
         // Re-render affected section
         if (section === 'vulnerability') renderVulnerabilityList();
         else renderNewsList();
+
+        updateStartRecordingButton();
     } catch {
         // Error toast already displayed by apiCall
     }
@@ -476,6 +588,8 @@ function bindAddButton() {
             state.items[section].push(data.item);
             if (section === 'vulnerability') renderVulnerabilityList();
             else renderNewsList();
+
+            updateStartRecordingButton();
 
             // Reset the add panel
             resetAddPanel();
@@ -712,18 +826,70 @@ function bindAuthorSuggestionsForAddPanel() {
 }
 
 /* ----------------------------------------------------------
+   handleDropOnItem(draggedId, targetId)
+   Calls the nest_item API. Handles the 409 requiresConfirmation
+   response with a confirmation dialog before re-issuing the call
+   with transferTalkingPoints: true.
+   ---------------------------------------------------------- */
+async function handleDropOnItem(draggedId, targetId) {
+    const json = await apiCall(
+        'nest_item',
+        { itemId: draggedId, targetId, transferTalkingPoints: false },
+        { raw: true }
+    );
+
+    if (!json.success && json.requiresConfirmation) {
+        // 409: primary has talking points — ask the user before transferring
+        const confirmed = await showConfirmDialog({
+            title:        'Transfer Recording Notes?',
+            body:         json.warning || 'This item has recording notes. Transfer them to the new primary?',
+            cancelLabel:  'Cancel',
+            confirmLabel: 'Transfer & Continue',
+        });
+        if (!confirmed) return;
+
+        try {
+            const data = await apiCall('nest_item', {
+                itemId: draggedId,
+                targetId,
+                transferTalkingPoints: true,
+            });
+            state.items.news = data.items.news;
+            renderNewsList();
+        } catch {
+            // Error toast shown by apiCall
+        }
+        return;
+    }
+
+    if (!json.success) {
+        showToast('error', json.error || 'Nesting failed.');
+        return;
+    }
+
+    state.items.news = json.data.items.news;
+    renderNewsList();
+}
+
+/* ----------------------------------------------------------
    Drag-and-drop — section container bindings
    Binds dragover/dragleave/drop on the given list container.
    Only accepts drops from items belonging to the same section.
+
+   For the news section, also supports drop-on-item nesting:
+   - Center 50% of an item height → .drop-target-nest ring → nest_item
+   - Top / bottom 25% → horizontal bar indicator → reorder_items
+   Story-group containers are treated as single draggable units;
+   their full expanded ID list (primary + secondaries) is sent to
+   reorder_items so the server-side count validation passes.
    ---------------------------------------------------------- */
 function bindDragAndDrop(containerId, section) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
     let dropIndicator = null;
-    // The item row to insert the dragged item *before* on drop.
-    // null means append at the end.
-    let dropBeforeRow = null;
+    let dropBeforeRow = null; // top-level element to insert before (reorder mode)
+    let nestTargetEl  = null; // standalone .item-row highlighted for nesting (news only)
 
     function removeIndicator() {
         if (dropIndicator) {
@@ -732,31 +898,92 @@ function bindDragAndDrop(containerId, section) {
         }
     }
 
-    // Returns item rows (excludes the drop-indicator and the dragged row itself)
-    function getStaticRows() {
-        return [...container.querySelectorAll('.item-row:not(.dragging)')];
+    function removeNestHighlight() {
+        if (nestTargetEl) {
+            nestTargetEl.classList.remove('drop-target-nest');
+            nestTargetEl = null;
+        }
+    }
+
+    // Returns top-level draggable elements in DOM order.
+    // For news: mix of .story-group containers and standalone .item-row elements.
+    // For vulnerability: flat list of .item-row elements.
+    function getTopLevelDraggables() {
+        if (section !== 'news') {
+            return [...container.querySelectorAll('.item-row:not(.dragging)')];
+        }
+        const groups     = [...container.querySelectorAll(':scope > .story-group:not(.dragging)')];
+        const standalones = [...container.querySelectorAll(':scope > .item-row:not(.dragging)')];
+        return [...groups, ...standalones].sort((a, b) =>
+            a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+        );
+    }
+
+    // Gets the representative ID for a top-level draggable element.
+    // Groups use data-primary-id; standalone rows use data-id.
+    function getDraggableId(el) {
+        return parseInt(
+            el.classList.contains('story-group') ? el.dataset.primaryId : el.dataset.id,
+            10
+        );
     }
 
     container.addEventListener('dragover', (e) => {
-        // Reject cross-section drags at the dragover stage so the browser shows
-        // a "no-drop" cursor instead of misleadingly accepting the gesture (Issue 3 fix)
+        // Reject cross-section drags so the browser shows a "no-drop" cursor
         if (dragSourceSection !== null && dragSourceSection !== section) return;
 
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
 
-        // Find which row the mouse is above, based on vertical midpoints
-        const rows = getStaticRows();
+        const topLevel = getTopLevelDraggables();
+
+        // --- News section: detect drop-on center zone for nesting ---
+        if (section === 'news') {
+            // Both standalone .item-row and .story-group containers can be nest targets.
+            // Merge and sort into DOM order so hit-testing is position-accurate.
+            const nestCandidates = [
+                ...container.querySelectorAll(':scope > .item-row:not(.dragging)'),
+                ...container.querySelectorAll(':scope > .story-group:not(.dragging)'),
+            ].sort((a, b) =>
+                a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+            );
+            let foundNestTarget = null;
+
+            for (const el of nestCandidates) {
+                const rect = el.getBoundingClientRect();
+                if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    const ratio = (e.clientY - rect.top) / rect.height;
+                    if (ratio > 0.25 && ratio < 0.75) {
+                        foundNestTarget = el;
+                    }
+                    break;
+                }
+            }
+
+            if (foundNestTarget) {
+                removeIndicator();
+                if (nestTargetEl !== foundNestTarget) {
+                    removeNestHighlight();
+                    nestTargetEl = foundNestTarget;
+                    foundNestTarget.classList.add('drop-target-nest');
+                }
+                dropBeforeRow = null;
+                return;
+            }
+        }
+
+        // Not in nest zone — clear any nest highlight and show reorder bar
+        removeNestHighlight();
+
         dropBeforeRow = null;
-        for (const row of rows) {
-            const rect = row.getBoundingClientRect();
+        for (const el of topLevel) {
+            const rect = el.getBoundingClientRect();
             if (e.clientY < rect.top + rect.height / 2) {
-                dropBeforeRow = row;
+                dropBeforeRow = el;
                 break;
             }
         }
 
-        // Reposition indicator
         removeIndicator();
         dropIndicator = document.createElement('div');
         dropIndicator.className = 'drop-indicator';
@@ -769,9 +996,10 @@ function bindDragAndDrop(containerId, section) {
     });
 
     container.addEventListener('dragleave', (e) => {
-        // Only clear when the mouse truly leaves the container (not just a child element)
+        // Only clear when the mouse truly leaves the container
         if (!container.contains(e.relatedTarget)) {
             removeIndicator();
+            removeNestHighlight();
             dropBeforeRow = null;
         }
     });
@@ -779,43 +1007,91 @@ function bindDragAndDrop(containerId, section) {
     container.addEventListener('drop', async (e) => {
         e.preventDefault();
 
-        // Snapshot before cleanup
         const insertBefore = dropBeforeRow;
+        const nestTarget   = nestTargetEl;
         removeIndicator();
+        removeNestHighlight();
         dropBeforeRow = null;
 
-        const draggedId = parseInt(e.dataTransfer.getData('text/plain'), 10);
-
-        // Cross-section drop guard: verify item belongs to this section
+        const draggedId    = parseInt(e.dataTransfer.getData('text/plain'), 10);
         const sectionItems = state.items[section] || [];
+
+        // Cross-section drop guard
         if (!sectionItems.find(item => item.id === draggedId)) return;
 
-        // Compute new ordered array of IDs:
-        // take all non-dragged rows, find insertion index, splice dragged id in
-        const otherRows = getStaticRows().filter(
-            row => parseInt(row.dataset.id, 10) !== draggedId
-        );
-        const insertIdx = insertBefore
-            ? otherRows.indexOf(insertBefore)
-            : -1;
-        const effectiveIdx = insertIdx < 0 ? otherRows.length : insertIdx;
+        const draggedItem = sectionItems.find(item => item.id === draggedId);
 
-        const orderedIds = otherRows.map(row => parseInt(row.dataset.id, 10));
-        orderedIds.splice(effectiveIdx, 0, draggedId);
+        // --- Secondary extraction: promote secondary to top-level ---
+        // Within-group reorders are intercepted by the group's own drop listener
+        // (which calls e.stopPropagation()), so this branch only fires when the
+        // secondary is dragged to a position outside its parent group.
+        if (section === 'news' && draggedItem && draggedItem.parent_id !== null) {
+            const topLevel        = getTopLevelDraggables();
+            const topLevelIds     = topLevel.map(el => getDraggableId(el));
+            const insertIdx       = insertBefore ? topLevel.indexOf(insertBefore) : -1;
+            const pos             = insertIdx < 0 ? topLevelIds.length : insertIdx;
+            const newTopLevelOrder = [...topLevelIds];
+            newTopLevelOrder.splice(pos, 0, draggedId);
+
+            try {
+                const data = await apiCall('extract_item', { itemId: draggedId, newTopLevelOrder });
+                state.items.news = data.items.news;
+                renderNewsList();
+            } catch {
+                // Error toast shown by apiCall
+            }
+            return;
+        }
+
+        // --- Nest drop ---
+        if (nestTarget) {
+            // Story groups expose their primary ID via data-primary-id;
+            // standalone item rows use data-id.
+            const targetId = nestTarget.classList.contains('story-group')
+                ? parseInt(nestTarget.dataset.primaryId, 10)
+                : parseInt(nestTarget.dataset.id, 10);
+            await handleDropOnItem(draggedId, targetId);
+            return;
+        }
+
+        // --- Reorder drop ---
+        // Send only the top-level (primary/standalone) IDs; the server keeps
+        // secondaries attached to their primaries via parent_id unchanged.
+        const otherEls     = getTopLevelDraggables().filter(el => getDraggableId(el) !== draggedId);
+        const insertIdx    = insertBefore ? otherEls.indexOf(insertBefore) : -1;
+        const effectiveIdx = insertIdx < 0 ? otherEls.length : insertIdx;
+        const topLevelIds  = otherEls.map(el => getDraggableId(el));
+        topLevelIds.splice(effectiveIdx, 0, draggedId);
 
         try {
-            await apiCall('reorder_items', { section, order: orderedIds });
+            await apiCall('reorder_items', { section, order: topLevelIds });
 
-            // Update sort_order in state and re-render
+            // Update sort_order for top-level items then rebuild state in new order
             const lookup = new Map(sectionItems.map(item => [item.id, item]));
-            orderedIds.forEach((id, idx) => {
+            topLevelIds.forEach((id, idx) => {
                 const item = lookup.get(id);
                 if (item) item.sort_order = idx;
             });
-            state.items[section] = orderedIds.map(id => lookup.get(id)).filter(Boolean);
 
-            if (section === 'vulnerability') renderVulnerabilityList();
-            else renderNewsList();
+            if (section === 'news') {
+                // Interleave each primary with its secondaries in their existing order
+                const reordered = [];
+                for (const primaryId of topLevelIds) {
+                    const primary = lookup.get(primaryId);
+                    if (primary) {
+                        reordered.push(primary);
+                        const secs = sectionItems
+                            .filter(i => i.parent_id === primaryId)
+                            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+                        reordered.push(...secs);
+                    }
+                }
+                state.items.news = reordered;
+                renderNewsList();
+            } else {
+                state.items[section] = topLevelIds.map(id => lookup.get(id)).filter(Boolean);
+                renderVulnerabilityList();
+            }
         } catch {
             // Error toast already shown by apiCall; leave list unchanged
         }
@@ -930,6 +1206,7 @@ function bindNewEpisodeButton() {
             renderEpisodeMeta();
             renderVulnerabilityList();
             renderNewsList();
+            updateStartRecordingButton();
 
             // Hide the output panel so stale markdown is not shown
             outputPanel.setAttribute('hidden', '');
@@ -938,6 +1215,355 @@ function bindNewEpisodeButton() {
         }
     });
 }
+
+/* ----------------------------------------------------------
+   storyGroupModule
+   Renders the news section with story-group containers (grouped
+   items) and standalone item rows. Exposes renderNewsSection()
+   which is called by renderNewsList().
+   ---------------------------------------------------------- */
+const storyGroupModule = (() => {
+
+    /* Binds drag-and-drop handlers on a .story-group__secondaries container so
+       that secondary items can be reordered within their parent group.
+       Only activates when dragSourceParentId matches this group's primaryId,
+       which prevents interference with whole-group or top-level drags.
+       e.stopPropagation() in both dragover and drop keeps the section-level
+       handler from treating within-group drops as extract_item operations. */
+    function bindSecondaryDragAndDrop(secondariesContainer, primaryId) {
+        let dropBeforeRow = null;
+        let dropIndicator = null;
+
+        function clearIndicator() {
+            if (dropIndicator) { dropIndicator.remove(); dropIndicator = null; }
+            dropBeforeRow = null;
+        }
+
+        secondariesContainer.addEventListener('dragover', (e) => {
+            if (dragSourceSection !== 'news' || dragSourceParentId !== primaryId) return;
+            e.preventDefault();
+            e.stopPropagation(); // prevent section-level dragover from overwriting dropBeforeRow
+
+            const secRows = [...secondariesContainer.querySelectorAll('.item-row:not(.dragging)')];
+            dropBeforeRow = null;
+            for (const row of secRows) {
+                const rect = row.getBoundingClientRect();
+                if (e.clientY < rect.top + rect.height / 2) {
+                    dropBeforeRow = row;
+                    break;
+                }
+            }
+
+            if (dropIndicator) dropIndicator.remove();
+            dropIndicator = document.createElement('div');
+            dropIndicator.className = 'drop-indicator';
+            if (dropBeforeRow) {
+                secondariesContainer.insertBefore(dropIndicator, dropBeforeRow);
+            } else {
+                secondariesContainer.appendChild(dropIndicator);
+            }
+        });
+
+        secondariesContainer.addEventListener('dragleave', (e) => {
+            if (!secondariesContainer.contains(e.relatedTarget)) clearIndicator();
+        });
+
+        // Clean up indicator if the drag ends without a valid drop (e.g. Escape key)
+        secondariesContainer.addEventListener('dragend', clearIndicator);
+
+        secondariesContainer.addEventListener('drop', async (e) => {
+            if (dragSourceSection !== 'news' || dragSourceParentId !== primaryId) return;
+            e.preventDefault();
+            e.stopPropagation(); // prevent section-level drop from also firing
+
+            const savedBefore = dropBeforeRow;
+            clearIndicator();
+
+            const draggedId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const secRows   = [...secondariesContainer.querySelectorAll('.item-row:not(.dragging)')];
+            const otherIds  = secRows.map(row => parseInt(row.dataset.id, 10));
+            const insertIdx = savedBefore
+                ? otherIds.indexOf(parseInt(savedBefore.dataset.id, 10))
+                : -1;
+            const effectiveIdx = insertIdx < 0 ? otherIds.length : insertIdx;
+
+            const newSecondaryOrder = [...otherIds];
+            newSecondaryOrder.splice(effectiveIdx, 0, draggedId);
+
+            try {
+                const data = await apiCall('reorder_group', { primaryId, newSecondaryOrder });
+                state.items.news = data.items.news;
+                renderNewsList();
+            } catch {
+                // Error toast shown by apiCall
+            }
+        });
+    }
+
+    /* Renders the entire news section as a DocumentFragment.
+       Items with parent_id === null are primaries or standalones.
+       Items with a non-null parent_id are secondaries, grouped
+       under their primary. */
+    function renderNewsSection(items) {
+        const fragment = document.createDocumentFragment();
+
+        // Index secondaries by their parent_id
+        const secondariesByParent = new Map();
+        for (const item of items) {
+            if (item.parent_id !== null && item.parent_id !== undefined) {
+                if (!secondariesByParent.has(item.parent_id)) {
+                    secondariesByParent.set(item.parent_id, []);
+                }
+                secondariesByParent.get(item.parent_id).push(item);
+            }
+        }
+
+        // Iterate top-level items in their existing sort order
+        for (const item of items) {
+            if (item.parent_id !== null && item.parent_id !== undefined) continue;
+
+            const secondaries = secondariesByParent.get(item.id) || [];
+
+            if (secondaries.length > 0) {
+                fragment.appendChild(renderGroupContainer(item, secondaries));
+            } else {
+                // Standalone item: render with talking-points panel
+                const row = renderItem(item, 'news');
+                row.appendChild(talkingPointsModule.renderTalkingPointsPanel(item));
+                fragment.appendChild(row);
+            }
+        }
+
+        return fragment;
+    }
+
+    /* Builds a .story-group container for one primary and its secondaries. */
+    function renderGroupContainer(primary, secondaries) {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'story-group';
+        groupDiv.draggable = true;
+        groupDiv.dataset.primaryId = primary.id;
+
+        // Group-level drag events — move the whole group as a unit
+        groupDiv.addEventListener('dragstart', (e) => {
+            // If the event originates from any element inside an .item-row, let the
+            // item-row's own drag handle take over. Without this broad guard, dragging
+            // a secondary item's text content would bubble up and overwrite dataTransfer
+            // with the primary's ID (DnD bubbling hazard).
+            if (e.target !== groupDiv && e.target.closest('.item-row')) return;
+            dragSourceSection  = 'news';
+            dragSourceParentId = null; // whole-group drag is a top-level operation
+            e.dataTransfer.setData('text/plain', String(primary.id));
+            e.dataTransfer.effectAllowed = 'move';
+            const rect = groupDiv.getBoundingClientRect();
+            e.dataTransfer.setDragImage(groupDiv, e.clientX - rect.left, e.clientY - rect.top);
+            requestAnimationFrame(() => groupDiv.classList.add('dragging'));
+        });
+
+        groupDiv.addEventListener('dragend', () => {
+            groupDiv.classList.remove('dragging');
+            dragSourceSection  = null;
+            dragSourceParentId = null;
+        });
+
+        // Visual group drag handle (not draggable itself — drag propagates to container)
+        const handle = document.createElement('span');
+        handle.className = 'story-group__drag-handle';
+        handle.textContent = '⠿';
+        handle.setAttribute('aria-hidden', 'true');
+        groupDiv.appendChild(handle);
+
+        // Primary item row with badge
+        const primaryWrapper = document.createElement('div');
+        primaryWrapper.className = 'story-group__primary';
+
+        const primaryRow = renderItem(primary, 'news');
+
+        const badge = document.createElement('span');
+        badge.className = 'story-group__primary-badge';
+        badge.textContent = 'PRIMARY';
+
+        const rowHandle = primaryRow.querySelector('.drag-handle');
+        if (rowHandle) {
+            rowHandle.insertAdjacentElement('afterend', badge);
+        } else {
+            primaryRow.prepend(badge);
+        }
+
+        primaryWrapper.appendChild(primaryRow);
+
+        // Talking-points panel attached to the primary item (task 9.6)
+        primaryWrapper.appendChild(talkingPointsModule.renderTalkingPointsPanel(primary));
+
+        groupDiv.appendChild(primaryWrapper);
+
+        // Indented secondaries container
+        const secondariesContainer = document.createElement('div');
+        secondariesContainer.className = 'story-group__secondaries';
+
+        for (const sec of secondaries) {
+            secondariesContainer.appendChild(renderSecondaryItem(sec));
+        }
+
+        groupDiv.appendChild(secondariesContainer);
+
+        // Wire within-group secondary reordering on the secondaries container.
+        bindSecondaryDragAndDrop(secondariesContainer, primary.id);
+
+        return groupDiv;
+    }
+
+    /* Builds a secondary item row with a SECONDARY badge.
+       Secondary items do not get a talking-points panel (spec §talking-points-ui). */
+    function renderSecondaryItem(item) {
+        const row = renderItem(item, 'news');
+
+        const badge = document.createElement('span');
+        badge.className = 'story-group__secondary-badge';
+        badge.textContent = 'SECONDARY';
+
+        const rowHandle = row.querySelector('.drag-handle');
+        if (rowHandle) {
+            rowHandle.insertAdjacentElement('afterend', badge);
+        } else {
+            row.prepend(badge);
+        }
+
+        return row;
+    }
+
+    // Only renderNewsSection is part of the public API (spec §3.4).
+    // renderGroupContainer and renderSecondaryItem are internal helpers.
+    return { renderNewsSection };
+})();
+
+/* ----------------------------------------------------------
+   talkingPointsModule
+   Renders and manages the inline contenteditable bullet editor
+   for per-item recording notes (talking points).
+   ---------------------------------------------------------- */
+const talkingPointsModule = (() => {
+
+    /* Creates one <li contenteditable> bullet, wiring the keydown handler. */
+    function createBullet(text) {
+        const li = document.createElement('li');
+        li.contentEditable = 'true';
+        li.spellcheck = true;
+        li.textContent = text;
+
+        if (!text) {
+            // data-placeholder is read by the CSS ::before pseudo-element
+            li.dataset.placeholder = 'Add a talking point…';
+        }
+
+        li.addEventListener('keydown', handleBulletKeydown);
+        return li;
+    }
+
+    /* Returns a .talking-points-panel DOM node for the given item.
+       Splits talking_points on \n to populate the bullet list.
+       Empty talking_points renders one placeholder bullet. */
+    function renderTalkingPointsPanel(item) {
+        const panel = document.createElement('div');
+        panel.className = 'talking-points-panel';
+        panel.dataset.itemId = item.id;
+
+        const label = document.createElement('span');
+        label.className = 'talking-points-panel__label';
+        label.textContent = 'Recording Notes — not included in show notes';
+        label.setAttribute('aria-hidden', 'true');
+        panel.appendChild(label);
+
+        const ul = document.createElement('ul');
+        ul.setAttribute('aria-label', `Recording notes for item ${item.id}`);
+
+        const raw     = item.talking_points || '';
+        // Filter out embedded empty lines (spec §10.3: "ignore blank lines from old data")
+        const lines   = raw.split('\n').filter(l => l.trim() !== '');
+        const bullets = lines.length > 0 ? lines : [''];
+
+        for (const line of bullets) {
+            ul.appendChild(createBullet(line));
+        }
+
+        panel.appendChild(ul);
+
+        // Attach debounced auto-save on any input inside the panel
+        const debouncedSave = createDebounce(
+            () => saveTalkingPoints(item.id, panel),
+            800
+        );
+        panel.addEventListener('input', debouncedSave);
+
+        return panel;
+    }
+
+    /* Joins all <li> textContent values with \n, trims each line,
+       and drops trailing empty lines. */
+    function parseBullets(panelEl) {
+        const lines = [...panelEl.querySelectorAll('li')]
+            .map(li => li.textContent.trim());
+
+        let end = lines.length;
+        while (end > 0 && lines[end - 1] === '') {
+            end--;
+        }
+
+        return lines.slice(0, end).join('\n');
+    }
+
+    /* Enter → insert new <li> after current and focus it.
+       Backspace on empty <li> → remove it and focus the previous. */
+    function handleBulletKeydown(e) {
+        const li = e.currentTarget;
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const newLi = createBullet('');
+            if (li.nextSibling) {
+                li.parentNode.insertBefore(newLi, li.nextSibling);
+            } else {
+                li.parentNode.appendChild(newLi);
+            }
+            newLi.focus();
+
+        } else if (e.key === 'Backspace' && li.textContent === '') {
+            // Never remove the last remaining bullet — the editor must always
+            // have at least one <li> to accept new input.
+            if (li.parentNode.querySelectorAll('li').length <= 1) return;
+            e.preventDefault();
+            const prev = li.previousElementSibling;
+            li.remove();
+
+            if (prev) {
+                prev.focus();
+                // Move caret to end of previous bullet
+                const range = document.createRange();
+                const sel   = window.getSelection();
+                range.selectNodeContents(prev);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }
+    }
+
+    /* Calls update_talking_points. Best-effort — errors are already
+       surfaced by apiCall's toast; we do not re-throw here. */
+    async function saveTalkingPoints(itemId, panelEl) {
+        const talkingPoints = parseBullets(panelEl);
+        try {
+            const data = await apiCall('update_talking_points', { itemId, talkingPoints });
+            // Keep in-memory state in sync with the saved value
+            const item = (state.items.news || []).find(i => i.id === itemId);
+            if (item) item.talking_points = data.item.talking_points;
+        } catch {
+            // Error toast already shown by apiCall
+        }
+    }
+
+    return { renderTalkingPointsPanel };
+})();
 
 /* ----------------------------------------------------------
    Initialise on DOMContentLoaded
@@ -967,4 +1593,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Ensure buttons start in correct disabled state
     updateAddButtonState();
+    updateStartRecordingButton();
 });

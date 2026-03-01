@@ -14,6 +14,7 @@ $state = [
         'show_title'  => $config['show_title'],
         'show_tagline' => $config['show_tagline'],
         'sections'    => $config['sections'],
+        'ws_port'     => (int) $config['ws_port'],
     ],
 ];
 
@@ -41,6 +42,7 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 </header>
 
 <main>
+<div class="prep-ui">
     <section id="episode-meta" aria-label="Episode metadata">
         <div class="episode-meta-fields">
             <label for="ep-week">Week</label>
@@ -112,6 +114,10 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 
     <div id="action-bar">
         <button type="button" id="btn-generate">Generate Show Notes</button>
+        <div class="action-bar__right">
+            <button type="button" id="btn-new-episode">New Episode</button>
+            <button type="button" id="btn-start-recording" class="btn-recording" disabled>Start Recording</button>
+        </div>
     </div>
 
     <section id="output-panel" aria-label="Generated Markdown output" hidden>
@@ -123,10 +129,11 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
     <!-- Visually-hidden live region; JS updates this to announce list mutations
          (item added/deleted) to screen-reader users without visual disruption. -->
     <span class="sr-only" aria-live="polite" id="list-announcer"></span>
+</div><!-- /.prep-ui -->
+<div id="host-view" hidden></div>
 </main>
 
 <footer>
-    <button type="button" id="btn-new-episode">New Episode</button>
     <span id="footer-status" aria-live="polite"></span>
 </footer>
 

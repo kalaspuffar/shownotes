@@ -18,6 +18,39 @@
     --spacing-lg:         24px;
     --font-mono:          'Courier New', Courier, monospace;
     --font-sans:          system-ui, -apple-system, sans-serif;
+
+    /* Recording-mode colour tokens (applied when <body> carries .recording-mode) */
+    --color-recording-bg:      #1a1a2e;
+    --color-recording-surface: #16213e;
+    --color-recording-accent:  #e94560;
+    --color-recording-text:    #e8eaf6;
+    --color-recording-muted:   #8892a4;
+
+    /* WebSocket connection status indicators */
+    --color-ws-connected:    #27ae60;
+    --color-ws-disconnected: #e74c3c;
+
+    /* Story-group container */
+    --color-group-border:       #c5d8c0;
+    --color-group-bg:           #f0f5f0;
+    --color-group-border-width: 3px;
+
+    /* Primary / Secondary badges */
+    --color-primary-badge:   #2a6b44;
+    --color-secondary-badge: #7fa99f;
+    --badge-font-size:       0.65rem;
+    --badge-font-weight:     700;
+    --badge-padding:         2px 8px;
+    --badge-border-radius:   100px;
+    --badge-letter-spacing:  0.06em;
+
+    /* Recording-mode action button */
+    --color-btn-recording:       #c0392b;
+    --color-btn-recording-hover: #a93226;
+
+    /* Talking-points panel */
+    --tp-label-font-size: 0.75rem;
+    --color-tp-separator: var(--color-border);
 }
 
 /* ============================================================
@@ -220,6 +253,7 @@ header h1 {
    ============================================================ */
 .item-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--spacing-sm);
     padding: var(--spacing-sm) 0;
@@ -652,6 +686,16 @@ ul.author-suggest-list {
         --color-text-muted:   #98989c;
         --color-drag-handle:  #5a5a5e;
         --color-drag-over:    #5a9469;
+
+        /* Story-group container — without these the pale light-mode greens
+           bleed through onto dark backgrounds, making talking-point text
+           (correctly coloured #e8e8e8) invisible against the light fill. */
+        --color-group-bg:     #282b29;
+        --color-group-border: #3d5847;
+
+        /* Badges: lighten primary so white text passes WCAG AA on dark surfaces */
+        --color-primary-badge:   #3a7a50;
+        --color-secondary-badge: #5e8f8b;
     }
 
     /* Toast warning has no CSS variable — override directly.
@@ -664,4 +708,267 @@ ul.author-suggest-list {
     .item-row.dragging {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     }
+}
+
+/* ============================================================
+   Confirmation Modal Dialog
+   ============================================================ */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.50);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-dialog {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    padding: var(--spacing-lg);
+    max-width: 440px;
+    width: calc(100% - var(--spacing-lg) * 2);
+    z-index: 501;
+}
+
+.modal-dialog h2 {
+    font-size: 1rem;
+    margin: 0 0 var(--spacing-sm);
+}
+
+.modal-dialog p {
+    margin: 0 0 var(--spacing-md);
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+}
+
+.modal-dialog__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+}
+
+.modal-dialog__actions button {
+    padding: 7px var(--spacing-md);
+    border-radius: var(--radius);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.modal-dialog__cancel {
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text);
+}
+
+.modal-dialog__cancel:hover {
+    background: var(--color-bg);
+}
+
+.modal-dialog__confirm {
+    border: none;
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.modal-dialog__confirm:hover {
+    background: var(--color-primary-dark);
+}
+
+/* ============================================================
+   Story Group Container
+   ============================================================ */
+.story-group {
+    border-left: var(--color-group-border-width) solid var(--color-group-border);
+    background-color: var(--color-group-bg);
+    border-radius: var(--radius);
+    margin: var(--spacing-sm) 0;
+    padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-sm) var(--spacing-md);
+    position: relative;
+}
+
+.story-group.dragging {
+    opacity: 0.4;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* Group-level drag handle — absolutely positioned to the left of the group border,
+   matching the ⠿ ┌──────┐ layout shown in the spec ASCII art (§9.6 Option A). */
+.story-group__drag-handle {
+    position: absolute;
+    left: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: grab;
+    color: var(--color-drag-handle);
+    user-select: none;
+    font-size: 1rem;
+    line-height: 1.2;
+}
+
+.story-group__drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Primary row wrapper — full width within the group */
+.story-group__primary {
+    width: 100%;
+}
+
+/* PRIMARY / SECONDARY badge shared pill styles */
+.story-group__primary-badge,
+.story-group__secondary-badge {
+    display: inline-block;
+    font-size: var(--badge-font-size);
+    font-weight: var(--badge-font-weight);
+    padding: var(--badge-padding);
+    border-radius: var(--badge-border-radius);
+    letter-spacing: var(--badge-letter-spacing);
+    text-transform: uppercase;
+    color: #fff;
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: 3px;
+}
+
+.story-group__primary-badge {
+    background-color: var(--color-primary-badge);
+}
+
+.story-group__secondary-badge {
+    background-color: var(--color-secondary-badge);
+}
+
+/* Indented secondaries container with left tree connector */
+.story-group__secondaries {
+    margin-top: var(--spacing-sm);
+    margin-left: var(--spacing-md);
+    border-left: 2px solid var(--color-border);
+    padding-left: var(--spacing-sm);
+}
+
+/* Secondary item rows get a surface background and subtle border */
+.story-group__secondaries .item-row {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    margin-bottom: 4px;
+    padding-left: var(--spacing-sm);
+}
+
+.story-group__secondaries .item-row:last-child {
+    margin-bottom: 0;
+}
+
+/* Drop-on-item nest ring — applied by JS during dragover center zone */
+.drop-target-nest {
+    box-shadow: inset 0 0 0 2px var(--color-primary);
+    background-color: rgba(74, 124, 89, 0.08);
+    transition: background-color 0.1s, box-shadow 0.1s;
+    border-radius: var(--radius);
+}
+
+/* ============================================================
+   Talking-Points Panel
+   ============================================================ */
+.talking-points-panel {
+    border-top: 1px solid var(--color-tp-separator);
+    padding-top: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+}
+
+/* When the panel is a direct flex child of .item-row (standalone news items),
+   force it onto its own line below the metadata fields. In the grouped case
+   the panel is already a block sibling of .item-row, so this rule is inert. */
+.item-row > .talking-points-panel {
+    flex: 0 0 100%;
+}
+
+.talking-points-panel__label {
+    display: block;
+    font-size: var(--tp-label-font-size);
+    font-style: italic;
+    color: var(--color-text-muted);
+    margin-bottom: 4px;
+}
+
+.talking-points-panel ul {
+    list-style: disc;
+    list-style-position: inside;
+    margin: 0;
+    padding: 0;
+    color: var(--color-text);
+}
+
+/* Explicitly colour the disc marker so it remains readable in both
+   light and dark mode regardless of browser cascade behaviour. */
+.talking-points-panel li::marker {
+    color: var(--color-text);
+}
+
+/* Contenteditable bullet items */
+.talking-points-panel li[contenteditable] {
+    min-height: 1.4em;
+    outline: none;
+    border-radius: 2px;
+    padding: 1px 2px;
+    font-size: 0.85rem;
+    color: var(--color-text);
+}
+
+.talking-points-panel li[contenteditable]:focus-visible {
+    box-shadow: 0 0 0 2px var(--color-primary);
+    outline: none;
+}
+
+/* Empty bullet placeholder text via ::before */
+.talking-points-panel li[contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: var(--color-text-muted);
+    pointer-events: none;
+}
+
+/* ============================================================
+   Action Bar — layout update & Recording button
+   ============================================================ */
+
+/* Push the right-side group to the far right */
+.action-bar__right {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-left: auto;
+}
+
+/* "Start Recording" button — visually distinct red style */
+.btn-recording {
+    padding: 8px var(--spacing-lg);
+    border: none;
+    border-radius: var(--radius);
+    background-color: var(--color-btn-recording);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.btn-recording:hover:not(:disabled) {
+    background-color: var(--color-btn-recording-hover);
+}
+
+.btn-recording:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.btn-recording:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
 }
