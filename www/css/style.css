@@ -685,6 +685,16 @@ ul.author-suggest-list {
         --color-text-muted:   #98989c;
         --color-drag-handle:  #5a5a5e;
         --color-drag-over:    #5a9469;
+
+        /* Story-group container — without these the pale light-mode greens
+           bleed through onto dark backgrounds, making talking-point text
+           (correctly coloured #e8e8e8) invisible against the light fill. */
+        --color-group-bg:     #282b29;
+        --color-group-border: #3d5847;
+
+        /* Badges: lighten primary so white text passes WCAG AA on dark surfaces */
+        --color-primary-badge:   #3a7a50;
+        --color-secondary-badge: #5e8f8b;
     }
 
     /* Toast warning has no CSS variable — override directly.
@@ -884,6 +894,13 @@ ul.author-suggest-list {
     list-style-position: inside;
     margin: 0;
     padding: 0;
+    color: var(--color-text);
+}
+
+/* Explicitly colour the disc marker so it remains readable in both
+   light and dark mode regardless of browser cascade behaviour. */
+.talking-points-panel li::marker {
+    color: var(--color-text);
 }
 
 /* Contenteditable bullet items */
