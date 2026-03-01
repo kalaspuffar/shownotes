@@ -1688,7 +1688,7 @@ const recordingModule = (() => {
         return window.open(
             '/audience.php',
             'cncAudienceWindow',
-            'width=1280,height=800,menubar=no,toolbar=no,status=no,resizable=yes'
+            `width=${screen.availWidth},height=${screen.availHeight},left=0,top=0,menubar=no,toolbar=no,status=no,resizable=yes`
         );
     }
 
@@ -1801,10 +1801,10 @@ const recordingModule = (() => {
         if (!dot || !text) return;
         if (connected) {
             dot.classList.add('connected');
-            text.textContent = 'Connected';
+            text.textContent = 'WS: Connected';
         } else {
             dot.classList.remove('connected');
-            text.textContent = 'Disconnected';
+            text.textContent = 'WS: Disconnected';
         }
     }
 
@@ -1819,10 +1819,10 @@ const recordingModule = (() => {
                     <span class="hv-ws-text">Connecting…</span>
                 </div>
                 <div class="hv-topbar__center">
-                    <span class="hv-nav-counter" aria-live="polite"></span>
+                    <button class="hv-exit-btn" type="button" id="hv-btn-exit">Exit Recording</button>
                 </div>
                 <div class="hv-topbar__right">
-                    <button class="hv-exit-btn" type="button" id="hv-btn-exit">Exit Recording</button>
+                    <span class="hv-nav-counter" aria-live="polite"></span>
                 </div>
             </div>
             <div class="hv-content">
@@ -1833,7 +1833,7 @@ const recordingModule = (() => {
             </div>
             <div class="hv-segment-break" style="display:none">
                 <div class="hv-segment-break__word" aria-label="Segment break: News">NEWS</div>
-                <div class="hv-segment-break__hint">Press → to continue</div>
+                <div class="hv-segment-break__hint">← press Next to continue →</div>
             </div>
             <div class="hv-nav-bar">
                 <button class="hv-nav-btn" id="hv-btn-prev" type="button">← Prev</button>

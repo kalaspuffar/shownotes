@@ -1098,6 +1098,11 @@ body.recording-mode #host-view {
 }
 
 /* Talking points list — large bullets with accent colour marker */
+.hv-talking-points {
+    flex: 1;
+    overflow-y: auto;
+}
+
 .hv-talking-points ul {
     list-style: none;
     margin: 0;
@@ -1166,6 +1171,7 @@ body.recording-mode #host-view {
 .hv-segment-break__word {
     font-size: 96px;
     font-weight: bold;
+    letter-spacing: 24px;
     color: var(--color-recording-accent);
     line-height: 1;
 }
@@ -1176,21 +1182,16 @@ body.recording-mode #host-view {
     margin-top: var(--spacing-md);
 }
 
-/* WS warning panel — amber tint, shown before/during recording start */
+/* WS warning panel — amber tint, inline below the Start Recording button area (§3.5) */
 #ws-warning {
+    display: block;
+    position: static;
     background: rgba(192, 122, 43, 0.12);
     border: 1px solid rgba(192, 122, 43, 0.7);
     border-radius: var(--radius);
     padding: var(--spacing-md);
     max-width: 480px;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 2000;
     color: var(--color-text);
-    background-color: var(--color-surface);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
 }
 
 #ws-warning p {

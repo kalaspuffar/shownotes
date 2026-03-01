@@ -60,19 +60,19 @@ $config = require __DIR__ . '/../etc/config.php';
         #loading-bar {
             position: fixed;
             top: 0;
-            left: 0;
+            left: -40%;
             height: 4px;
-            width: 100%;
-            background: linear-gradient(90deg, #e94560 0%, #8892a4 50%, #e94560 100%);
-            background-size: 200% 100%;
-            animation: audienceLoading 1.4s linear infinite;
+            width: 40%;
+            background: #e94560;
+            animation: audienceLoading 1.8s linear infinite;
             display: none;
             z-index: 10;
         }
 
         @keyframes audienceLoading {
-            from { background-position: 100% 0; }
-            to   { background-position: -100% 0; }
+            0%   { left: -40%; }
+            60%  { left: 100%; }
+            100% { left: 100%; }
         }
 
         /* Fallback notification — appears if iframe is blocked after 3 s */
@@ -93,11 +93,11 @@ $config = require __DIR__ . '/../etc/config.php';
             transition: opacity 0.6s;
         }
 
-        /* Pulsing disconnect indicator — bottom-right corner */
+        /* Pulsing disconnect indicator — bottom-left corner */
         #disconnect-dot {
             position: fixed;
-            bottom: 16px;
-            right: 16px;
+            bottom: 12px;
+            left: 12px;
             width: 12px;
             height: 12px;
             border-radius: 50%;
@@ -119,7 +119,7 @@ $config = require __DIR__ . '/../etc/config.php';
 
 <div id="waiting-msg">
     <div class="waiting-dot" aria-hidden="true"></div>
-    <span>Waiting for host…</span>
+    <span>Waiting for broadcast…</span>
 </div>
 
 <div id="loading-bar" aria-hidden="true"></div>
@@ -137,7 +137,7 @@ $config = require __DIR__ . '/../etc/config.php';
 <div id="disconnect-dot" hidden aria-label="Disconnected from host"></div>
 
 <script>
-const WS_DOMAIN = '<?= $config['ws_domain'] ?>';
+const WS_DOMAIN = <?= json_encode($config['ws_domain']) ?>;
 const WS_PORT = <?= (int)$config['ws_port'] ?>;
 
 (function () {
@@ -194,9 +194,30 @@ const WS_PORT = <?= (int)$config['ws_port'] ?>;
         }
     }
 
+    /* ---- URL validation (defence-in-depth: §11.2) ---- */
+
+    function isAllowedUrl(url) {
+        try {
+            const parsed = new URL(url);
+            if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+            const h = parsed.hostname;
+            const privateRanges = [
+                /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./,
+                /^192\.168\./, /^::1$/, /^localhost$/i, /^0\.0\.0\.0$/
+            ];
+            if (privateRanges.some(re => re.test(h))) return false;
+            return true;
+        } catch (_) { return false; }
+    }
+
     /* ---- URL loading with fallback ---- */
 
     function loadUrl(url) {
+        if (!isAllowedUrl(url)) {
+            console.warn('[audience] Blocked URL:', url);
+            return;
+        }
+
         currentUrl = url;
 
         // Clear any previous fallback timers
@@ -217,7 +238,7 @@ const WS_PORT = <?= (int)$config['ws_port'] ?>;
             fallbackMsg.hidden = false;
             fallbackMsg.style.opacity = '1';
 
-            window.open(url);
+            if (isAllowedUrl(url)) window.open(url);
 
             // Fade out the fallback message after 5 s
             fallbackFadeTimer = setTimeout(() => {
