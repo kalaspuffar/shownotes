@@ -20,6 +20,13 @@ const state = {
 // cross-section drops before the drop event fires.
 let dragSourceSection = null;
 
+// Tracks the parent_id of the item currently being dragged.
+// null  → top-level primary or standalone item
+// <int> → secondary item; value is its parent primary's ID
+// Used by the group-level dragover handler to route same-group reorders
+// to reorder_group instead of letting them bubble up to extract_item.
+let dragSourceParentId = null;
+
 /* ----------------------------------------------------------
    10.2 — apiCall(action, payload)
    Single AJAX boundary for all server communication.
@@ -251,7 +258,8 @@ function renderItem(item, section) {
     // setDragImage forces the browser to use the full item row as the ghost
     // image even though the drag source is just the small handle element.
     handle.addEventListener('dragstart', (e) => {
-        dragSourceSection = section; // captured at module scope for dragover guards
+        dragSourceSection  = section; // captured at module scope for dragover guards
+        dragSourceParentId = item.parent_id ?? null;
         e.dataTransfer.setData('text/plain', String(item.id));
         e.dataTransfer.effectAllowed = 'move';
         const rect = row.getBoundingClientRect();
@@ -264,7 +272,8 @@ function renderItem(item, section) {
     });
     handle.addEventListener('dragend', () => {
         row.classList.remove('dragging');
-        dragSourceSection = null;
+        dragSourceSection  = null;
+        dragSourceParentId = null;
     });
 
     const fieldsEl = document.createElement('div');
@@ -930,16 +939,22 @@ function bindDragAndDrop(containerId, section) {
 
         // --- News section: detect drop-on center zone for nesting ---
         if (section === 'news') {
-            // Only direct-child standalone .item-row elements can be nest targets
-            const standalones = [...container.querySelectorAll(':scope > .item-row:not(.dragging)')];
+            // Both standalone .item-row and .story-group containers can be nest targets.
+            // Merge and sort into DOM order so hit-testing is position-accurate.
+            const nestCandidates = [
+                ...container.querySelectorAll(':scope > .item-row:not(.dragging)'),
+                ...container.querySelectorAll(':scope > .story-group:not(.dragging)'),
+            ].sort((a, b) =>
+                a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+            );
             let foundNestTarget = null;
 
-            for (const row of standalones) {
-                const rect = row.getBoundingClientRect();
+            for (const el of nestCandidates) {
+                const rect = el.getBoundingClientRect();
                 if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
                     const ratio = (e.clientY - rect.top) / rect.height;
                     if (ratio > 0.25 && ratio < 0.75) {
-                        foundNestTarget = row;
+                        foundNestTarget = el;
                     }
                     break;
                 }
@@ -998,59 +1013,85 @@ function bindDragAndDrop(containerId, section) {
         removeNestHighlight();
         dropBeforeRow = null;
 
-        const draggedId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const draggedId    = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const sectionItems = state.items[section] || [];
 
         // Cross-section drop guard
-        const sectionItems = state.items[section] || [];
         if (!sectionItems.find(item => item.id === draggedId)) return;
 
-        // TODO (Phase 4): Secondary items should support re-nesting (§9.2) and
-        // extraction (§9.3). For now we discard secondary drops explicitly so the
-        // intent is clear; do NOT silently swallow — return early here.
-        if (section === 'news') {
-            const draggedItem = sectionItems.find(item => item.id === draggedId);
-            if (draggedItem && draggedItem.parent_id !== null) return;
+        const draggedItem = sectionItems.find(item => item.id === draggedId);
+
+        // --- Secondary extraction: promote secondary to top-level ---
+        // Within-group reorders are intercepted by the group's own drop listener
+        // (which calls e.stopPropagation()), so this branch only fires when the
+        // secondary is dragged to a position outside its parent group.
+        if (section === 'news' && draggedItem && draggedItem.parent_id !== null) {
+            const topLevel        = getTopLevelDraggables();
+            const topLevelIds     = topLevel.map(el => getDraggableId(el));
+            const insertIdx       = insertBefore ? topLevel.indexOf(insertBefore) : -1;
+            const pos             = insertIdx < 0 ? topLevelIds.length : insertIdx;
+            const newTopLevelOrder = [...topLevelIds];
+            newTopLevelOrder.splice(pos, 0, draggedId);
+
+            try {
+                const data = await apiCall('extract_item', { itemId: draggedId, newTopLevelOrder });
+                state.items.news = data.items.news;
+                renderNewsList();
+            } catch {
+                // Error toast shown by apiCall
+            }
+            return;
         }
 
         // --- Nest drop ---
         if (nestTarget) {
-            const targetId = parseInt(nestTarget.dataset.id, 10);
+            // Story groups expose their primary ID via data-primary-id;
+            // standalone item rows use data-id.
+            const targetId = nestTarget.classList.contains('story-group')
+                ? parseInt(nestTarget.dataset.primaryId, 10)
+                : parseInt(nestTarget.dataset.id, 10);
             await handleDropOnItem(draggedId, targetId);
             return;
         }
 
         // --- Reorder drop ---
-        const otherEls = getTopLevelDraggables().filter(el => getDraggableId(el) !== draggedId);
-        const insertIdx = insertBefore ? otherEls.indexOf(insertBefore) : -1;
+        // Send only the top-level (primary/standalone) IDs; the server keeps
+        // secondaries attached to their primaries via parent_id unchanged.
+        const otherEls     = getTopLevelDraggables().filter(el => getDraggableId(el) !== draggedId);
+        const insertIdx    = insertBefore ? otherEls.indexOf(insertBefore) : -1;
         const effectiveIdx = insertIdx < 0 ? otherEls.length : insertIdx;
-
-        const topLevelIds = otherEls.map(el => getDraggableId(el));
+        const topLevelIds  = otherEls.map(el => getDraggableId(el));
         topLevelIds.splice(effectiveIdx, 0, draggedId);
 
-        // For news: expand to full list (primary + its secondaries in sort order)
-        // so the server-side count validation passes.
-        const orderedIds = section !== 'news'
-            ? topLevelIds
-            : topLevelIds.flatMap(id => {
-                const secs = sectionItems
-                    .filter(i => i.parent_id === id)
-                    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-                return [id, ...secs.map(s => s.id)];
-            });
-
         try {
-            await apiCall('reorder_items', { section, order: orderedIds });
+            await apiCall('reorder_items', { section, order: topLevelIds });
 
-            // Update sort_order in state and re-render
+            // Update sort_order for top-level items then rebuild state in new order
             const lookup = new Map(sectionItems.map(item => [item.id, item]));
-            orderedIds.forEach((id, idx) => {
+            topLevelIds.forEach((id, idx) => {
                 const item = lookup.get(id);
                 if (item) item.sort_order = idx;
             });
-            state.items[section] = orderedIds.map(id => lookup.get(id)).filter(Boolean);
 
-            if (section === 'vulnerability') renderVulnerabilityList();
-            else renderNewsList();
+            if (section === 'news') {
+                // Interleave each primary with its secondaries in their existing order
+                const reordered = [];
+                for (const primaryId of topLevelIds) {
+                    const primary = lookup.get(primaryId);
+                    if (primary) {
+                        reordered.push(primary);
+                        const secs = sectionItems
+                            .filter(i => i.parent_id === primaryId)
+                            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+                        reordered.push(...secs);
+                    }
+                }
+                state.items.news = reordered;
+                renderNewsList();
+            } else {
+                state.items[section] = topLevelIds.map(id => lookup.get(id)).filter(Boolean);
+                renderVulnerabilityList();
+            }
         } catch {
             // Error toast already shown by apiCall; leave list unchanged
         }
@@ -1183,6 +1224,82 @@ function bindNewEpisodeButton() {
    ---------------------------------------------------------- */
 const storyGroupModule = (() => {
 
+    /* Binds drag-and-drop handlers on a .story-group__secondaries container so
+       that secondary items can be reordered within their parent group.
+       Only activates when dragSourceParentId matches this group's primaryId,
+       which prevents interference with whole-group or top-level drags.
+       e.stopPropagation() in both dragover and drop keeps the section-level
+       handler from treating within-group drops as extract_item operations. */
+    function bindSecondaryDragAndDrop(secondariesContainer, primaryId) {
+        let dropBeforeRow = null;
+        let dropIndicator = null;
+
+        function clearIndicator() {
+            if (dropIndicator) { dropIndicator.remove(); dropIndicator = null; }
+            dropBeforeRow = null;
+        }
+
+        secondariesContainer.addEventListener('dragover', (e) => {
+            if (dragSourceSection !== 'news' || dragSourceParentId !== primaryId) return;
+            e.preventDefault();
+            e.stopPropagation(); // prevent section-level dragover from overwriting dropBeforeRow
+
+            const secRows = [...secondariesContainer.querySelectorAll('.item-row:not(.dragging)')];
+            dropBeforeRow = null;
+            for (const row of secRows) {
+                const rect = row.getBoundingClientRect();
+                if (e.clientY < rect.top + rect.height / 2) {
+                    dropBeforeRow = row;
+                    break;
+                }
+            }
+
+            if (dropIndicator) dropIndicator.remove();
+            dropIndicator = document.createElement('div');
+            dropIndicator.className = 'drop-indicator';
+            if (dropBeforeRow) {
+                secondariesContainer.insertBefore(dropIndicator, dropBeforeRow);
+            } else {
+                secondariesContainer.appendChild(dropIndicator);
+            }
+        });
+
+        secondariesContainer.addEventListener('dragleave', (e) => {
+            if (!secondariesContainer.contains(e.relatedTarget)) clearIndicator();
+        });
+
+        // Clean up indicator if the drag ends without a valid drop (e.g. Escape key)
+        secondariesContainer.addEventListener('dragend', clearIndicator);
+
+        secondariesContainer.addEventListener('drop', async (e) => {
+            if (dragSourceSection !== 'news' || dragSourceParentId !== primaryId) return;
+            e.preventDefault();
+            e.stopPropagation(); // prevent section-level drop from also firing
+
+            const savedBefore = dropBeforeRow;
+            clearIndicator();
+
+            const draggedId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const secRows   = [...secondariesContainer.querySelectorAll('.item-row:not(.dragging)')];
+            const otherIds  = secRows.map(row => parseInt(row.dataset.id, 10));
+            const insertIdx = savedBefore
+                ? otherIds.indexOf(parseInt(savedBefore.dataset.id, 10))
+                : -1;
+            const effectiveIdx = insertIdx < 0 ? otherIds.length : insertIdx;
+
+            const newSecondaryOrder = [...otherIds];
+            newSecondaryOrder.splice(effectiveIdx, 0, draggedId);
+
+            try {
+                const data = await apiCall('reorder_group', { primaryId, newSecondaryOrder });
+                state.items.news = data.items.news;
+                renderNewsList();
+            } catch {
+                // Error toast shown by apiCall
+            }
+        });
+    }
+
     /* Renders the entire news section as a DocumentFragment.
        Items with parent_id === null are primaries or standalones.
        Items with a non-null parent_id are secondaries, grouped
@@ -1234,7 +1351,8 @@ const storyGroupModule = (() => {
             // a secondary item's text content would bubble up and overwrite dataTransfer
             // with the primary's ID (DnD bubbling hazard).
             if (e.target !== groupDiv && e.target.closest('.item-row')) return;
-            dragSourceSection = 'news';
+            dragSourceSection  = 'news';
+            dragSourceParentId = null; // whole-group drag is a top-level operation
             e.dataTransfer.setData('text/plain', String(primary.id));
             e.dataTransfer.effectAllowed = 'move';
             const rect = groupDiv.getBoundingClientRect();
@@ -1244,7 +1362,8 @@ const storyGroupModule = (() => {
 
         groupDiv.addEventListener('dragend', () => {
             groupDiv.classList.remove('dragging');
-            dragSourceSection = null;
+            dragSourceSection  = null;
+            dragSourceParentId = null;
         });
 
         // Visual group drag handle (not draggable itself — drag propagates to container)
@@ -1287,6 +1406,9 @@ const storyGroupModule = (() => {
         }
 
         groupDiv.appendChild(secondariesContainer);
+
+        // Wire within-group secondary reordering on the secondaries container.
+        bindSecondaryDragAndDrop(secondariesContainer, primary.id);
 
         return groupDiv;
     }

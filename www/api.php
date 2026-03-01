@@ -231,7 +231,22 @@ function handleReorderItems(array $body, Database $db): array
 
     // Verify all IDs belong to the given section.
     $items = $db->getItems();
-    $sectionIds = array_map('intval', array_column($items[$section], 'id'));
+
+    // For the news section this endpoint only reorders top-level items; secondaries
+    // are reordered within their group via reorder_group. Filter accordingly so the
+    // membership check and the completeness count both work with the right set.
+    if ($section === 'news') {
+        $sectionIds = array_map(
+            'intval',
+            array_column(
+                array_filter($items[$section], fn($item) => $item['parent_id'] === null),
+                'id'
+            )
+        );
+    } else {
+        $sectionIds = array_map('intval', array_column($items[$section], 'id'));
+    }
+
     foreach ($orderedIds as $itemId) {
         if (!in_array($itemId, $sectionIds, true)) {
             return jsonError("Item ID $itemId does not belong to section \"$section\"", 400);
