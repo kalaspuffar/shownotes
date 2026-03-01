@@ -253,6 +253,7 @@ header h1 {
    ============================================================ */
 .item-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--spacing-sm);
     padding: var(--spacing-sm) 0;
@@ -879,6 +880,13 @@ ul.author-suggest-list {
     border-top: 1px solid var(--color-tp-separator);
     padding-top: var(--spacing-sm);
     margin-top: var(--spacing-sm);
+}
+
+/* When the panel is a direct flex child of .item-row (standalone news items),
+   force it onto its own line below the metadata fields. In the grouped case
+   the panel is already a block sibling of .item-row, so this rule is inert. */
+.item-row > .talking-points-panel {
+    flex: 0 0 100%;
 }
 
 .talking-points-panel__label {
