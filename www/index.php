@@ -115,6 +115,7 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
     <div id="action-bar">
         <button type="button" id="btn-generate">Generate Show Notes</button>
         <div class="action-bar__right">
+            <button type="button" id="btn-new-episode">New Episode</button>
             <button type="button" id="btn-start-recording" class="btn-recording" disabled>Start Recording</button>
         </div>
     </div>
@@ -133,7 +134,6 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 </main>
 
 <footer>
-    <button type="button" id="btn-new-episode">New Episode</button>
     <span id="footer-status" aria-live="polite"></span>
 </footer>
 

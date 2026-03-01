@@ -92,6 +92,75 @@ function showToast(type, message) {
 }
 
 /* ----------------------------------------------------------
+   showConfirmDialog({ title, body, cancelLabel, confirmLabel })
+   Renders a spec-compliant .modal-backdrop > .modal-dialog and
+   returns a Promise that resolves to true (confirm) or false (cancel).
+   ---------------------------------------------------------- */
+function showConfirmDialog({ title, body, cancelLabel, confirmLabel }) {
+    return new Promise((resolve) => {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.setAttribute('role', 'dialog');
+        backdrop.setAttribute('aria-modal', 'true');
+        backdrop.setAttribute('aria-labelledby', 'modal-heading');
+
+        const dialog = document.createElement('div');
+        dialog.className = 'modal-dialog';
+
+        const heading = document.createElement('h2');
+        heading.id = 'modal-heading';
+        heading.textContent = title;
+
+        const bodyEl = document.createElement('p');
+        bodyEl.textContent = body;
+
+        const actions = document.createElement('div');
+        actions.className = 'modal-dialog__actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'modal-dialog__cancel';
+        cancelBtn.textContent = cancelLabel;
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'modal-dialog__confirm';
+        confirmBtn.textContent = confirmLabel;
+
+        function close(result) {
+            document.removeEventListener('keydown', onKeydown);
+            backdrop.remove();
+            resolve(result);
+        }
+
+        function onKeydown(e) {
+            if (e.key === 'Escape') close(false);
+        }
+
+        cancelBtn.addEventListener('click', () => close(false));
+        confirmBtn.addEventListener('click', () => close(true));
+
+        // Dismiss on backdrop click (outside dialog)
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) close(false);
+        });
+
+        document.addEventListener('keydown', onKeydown);
+
+        actions.appendChild(cancelBtn);
+        actions.appendChild(confirmBtn);
+        dialog.appendChild(heading);
+        dialog.appendChild(bodyEl);
+        dialog.appendChild(actions);
+        backdrop.appendChild(dialog);
+        document.body.appendChild(backdrop);
+
+        // Move focus into the dialog for keyboard accessibility
+        cancelBtn.focus();
+    });
+}
+
+/* ----------------------------------------------------------
    10.5 — renderEpisodeMeta()
    Syncs episode meta inputs from state.
    ---------------------------------------------------------- */
@@ -762,9 +831,12 @@ async function handleDropOnItem(draggedId, targetId) {
 
     if (!json.success && json.requiresConfirmation) {
         // 409: primary has talking points — ask the user before transferring
-        const confirmed = window.confirm(
-            json.warning || 'This item has recording notes. Transfer them to the new primary?'
-        );
+        const confirmed = await showConfirmDialog({
+            title:        'Transfer Recording Notes?',
+            body:         json.warning || 'This item has recording notes. Transfer them to the new primary?',
+            cancelLabel:  'Cancel',
+            confirmLabel: 'Transfer & Continue',
+        });
         if (!confirmed) return;
 
         try {
@@ -932,7 +1004,9 @@ function bindDragAndDrop(containerId, section) {
         const sectionItems = state.items[section] || [];
         if (!sectionItems.find(item => item.id === draggedId)) return;
 
-        // Ignore drags from secondary items (intra-group reorder is a future phase)
+        // TODO (Phase 4): Secondary items should support re-nesting (§9.2) and
+        // extraction (§9.3). For now we discard secondary drops explicitly so the
+        // intent is clear; do NOT silently swallow — return early here.
         if (section === 'news') {
             const draggedItem = sectionItems.find(item => item.id === draggedId);
             if (draggedItem && draggedItem.parent_id !== null) return;
@@ -1155,9 +1229,11 @@ const storyGroupModule = (() => {
 
         // Group-level drag events — move the whole group as a unit
         groupDiv.addEventListener('dragstart', (e) => {
-            // If the event originates from an inner .drag-handle, let the inner
-            // handler take over instead (it has draggable=true and wins).
-            if (e.target !== groupDiv && e.target.classList.contains('drag-handle')) return;
+            // If the event originates from any element inside an .item-row, let the
+            // item-row's own drag handle take over. Without this broad guard, dragging
+            // a secondary item's text content would bubble up and overwrite dataTransfer
+            // with the primary's ID (DnD bubbling hazard).
+            if (e.target !== groupDiv && e.target.closest('.item-row')) return;
             dragSourceSection = 'news';
             e.dataTransfer.setData('text/plain', String(primary.id));
             e.dataTransfer.effectAllowed = 'move';
@@ -1234,7 +1310,9 @@ const storyGroupModule = (() => {
         return row;
     }
 
-    return { renderNewsSection, renderGroupContainer, renderSecondaryItem };
+    // Only renderNewsSection is part of the public API (spec §3.4).
+    // renderGroupContainer and renderSecondaryItem are internal helpers.
+    return { renderNewsSection };
 })();
 
 /* ----------------------------------------------------------
@@ -1248,11 +1326,12 @@ const talkingPointsModule = (() => {
     function createBullet(text) {
         const li = document.createElement('li');
         li.contentEditable = 'true';
+        li.spellcheck = true;
         li.textContent = text;
 
         if (!text) {
             // data-placeholder is read by the CSS ::before pseudo-element
-            li.dataset.placeholder = 'Add a note…';
+            li.dataset.placeholder = 'Add a talking point…';
         }
 
         li.addEventListener('keydown', handleBulletKeydown);
@@ -1276,10 +1355,10 @@ const talkingPointsModule = (() => {
         const ul = document.createElement('ul');
         ul.setAttribute('aria-label', `Recording notes for item ${item.id}`);
 
-        const raw    = item.talking_points || '';
-        const lines  = raw.split('\n');
-        const hasContent = lines.some(l => l.trim() !== '');
-        const bullets = hasContent ? lines : [''];
+        const raw     = item.talking_points || '';
+        // Filter out embedded empty lines (spec §10.3: "ignore blank lines from old data")
+        const lines   = raw.split('\n').filter(l => l.trim() !== '');
+        const bullets = lines.length > 0 ? lines : [''];
 
         for (const line of bullets) {
             ul.appendChild(createBullet(line));
@@ -1327,6 +1406,9 @@ const talkingPointsModule = (() => {
             newLi.focus();
 
         } else if (e.key === 'Backspace' && li.textContent === '') {
+            // Never remove the last remaining bullet — the editor must always
+            // have at least one <li> to accept new input.
+            if (li.parentNode.querySelectorAll('li').length <= 1) return;
             e.preventDefault();
             const prev = li.previousElementSibling;
             li.remove();
