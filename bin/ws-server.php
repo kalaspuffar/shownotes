@@ -3,6 +3,9 @@
 
 declare(strict_types=1);
 
+// Flush every echo immediately — important for real-time log output under process supervisors
+ob_implicit_flush(true);
+
 // ---------------------------------------------------------------------------
 // Bootstrap and configuration (tasks 1.1 – 1.4)
 // ---------------------------------------------------------------------------
@@ -22,6 +25,16 @@ $port = (int) $config['ws_port'];
 echo "[ws-server] Cozy News Corner WebSocket Server\n";
 echo "[ws-server] Listening on ws://{$host}:{$port}\n";
 echo "[ws-server] Press Ctrl+C to stop.\n";
+
+// ---------------------------------------------------------------------------
+// Logging helper
+// ---------------------------------------------------------------------------
+
+function logMsg(string $msg): void
+{
+    $ts = date('Y-m-d H:i:s');
+    echo "[ws-server] [{$ts}] {$msg}\n";
+}
 
 // ---------------------------------------------------------------------------
 // SIGINT handling (tasks 2.1 – 2.3)
@@ -189,12 +202,15 @@ function handleMessage($sender, string $rawPayload, array &$clients): void
     $msg = json_decode($rawPayload, true);
 
     if (!is_array($msg) || !isset($msg['action'])) {
-        echo "[ws-server] Received non-JSON or missing 'action': " . substr($rawPayload, 0, 80) . "\n";
+        logMsg("Received non-JSON or missing 'action': " . substr($rawPayload, 0, 80));
         return;
     }
 
     switch ($msg['action']) {
         case 'navigate':
+            $itemId  = $msg['itemId']  ?? '?';
+            $section = $msg['section'] ?? '?';
+            logMsg("navigate → item {$itemId} ({$section})");
             $frame = encodeFrame($rawPayload);
             foreach ($clients as $client) {
                 if ($client !== $sender) {
@@ -205,13 +221,13 @@ function handleMessage($sender, string $rawPayload, array &$clients): void
 
         case 'hello':
             $role = $msg['role'] ?? 'unknown';
-            echo "[ws-server] Client said hello as role: {$role}\n";
+            logMsg("Client said hello as role: {$role}");
             $ack = json_encode(['action' => 'ack', 'clients' => count($clients)]);
             socket_write($sender, encodeFrame($ack));
             break;
 
         default:
-            echo "[ws-server] Unknown action '{$msg['action']}' — ignoring.\n";
+            logMsg("Unknown action '{$msg['action']}' — ignoring.");
             break;
     }
 }
@@ -241,7 +257,7 @@ while (!$shutdown) {
         $newSocket = socket_accept($server);
         if ($newSocket !== false) {
             socket_getpeername($newSocket, $peerAddr, $peerPort);
-            echo "[ws-server] New connection from {$peerAddr}:{$peerPort}\n";
+            logMsg("New connection from {$peerAddr}:{$peerPort}");
             $pending[] = $newSocket;
         }
         // Remove server from the list so we don't process it again below
@@ -255,11 +271,13 @@ while (!$shutdown) {
         }
 
         if (performHandshake($pendingSocket)) {
+            socket_getpeername($pendingSocket, $peerAddr, $peerPort);
             $clients[] = $pendingSocket;
-            echo "[ws-server] Handshake complete — " . count($clients) . " client(s) connected.\n";
+            logMsg("Client connected: {$peerAddr}:{$peerPort} (total: " . count($clients) . ")");
         } else {
+            socket_getpeername($pendingSocket, $peerAddr, $peerPort);
             socket_close($pendingSocket);
-            echo "[ws-server] Handshake failed — connection dropped.\n";
+            logMsg("Handshake failed from {$peerAddr}:{$peerPort} — connection dropped.");
         }
 
         unset($pending[$pendingKey]);
@@ -275,10 +293,11 @@ while (!$shutdown) {
 
         if ($frame === null) {
             // Client disconnected unexpectedly
+            socket_getpeername($clientSocket, $peerAddr, $peerPort);
             socket_close($clientSocket);
             unset($clients[$clientKey]);
             $clients = array_values($clients);
-            echo "[ws-server] Client disconnected. " . count($clients) . " client(s) remaining.\n";
+            logMsg("Client disconnected: {$peerAddr}:{$peerPort} (" . count($clients) . " remaining)");
             continue;
         }
 
@@ -289,15 +308,19 @@ while (!$shutdown) {
             // Text frame — dispatch to message handler
             handleMessage($clientSocket, $payload, $clients);
         } elseif ($opcode === 0x9) {
-            // Ping — respond with pong (opcode 0x8A), same payload, unmasked
+            // Ping — respond with pong (opcode 0x8A), same payload, unmasked.
+            // RFC 6455 §5.5 guarantees control-frame payloads are ≤ 125 bytes,
+            // so a single length byte is always sufficient here.
             socket_write($clientSocket, chr(0x8A) . chr(strlen($payload)) . $payload);
         } elseif ($opcode === 0x8) {
             // Close frame — close socket and remove from list
+            socket_getpeername($clientSocket, $peerAddr, $peerPort);
             socket_close($clientSocket);
             unset($clients[$clientKey]);
             $clients = array_values($clients);
-            echo "[ws-server] Client sent close frame. " . count($clients) . " client(s) remaining.\n";
+            logMsg("Client sent close frame: {$peerAddr}:{$peerPort} (" . count($clients) . " remaining)");
         }
+        // opcode 0xA (pong) — unsolicited pongs are silently ignored per RFC 6455 §5.5.3
     }
 }
 
@@ -305,7 +328,8 @@ while (!$shutdown) {
 // Clean shutdown (task 8.10)
 // ---------------------------------------------------------------------------
 
-echo "\n[ws-server] Shutting down…\n";
+echo "\n";
+logMsg("Shutting down…");
 
 foreach ($clients as $client) {
     socket_close($client);
@@ -317,4 +341,4 @@ foreach ($pending as $pendingSocket) {
 
 socket_close($server);
 
-echo "[ws-server] All sockets closed. Goodbye.\n";
+logMsg("All sockets closed. Goodbye.");
