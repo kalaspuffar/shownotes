@@ -34,16 +34,20 @@ $action = $body['action'] ?? '';
 
 try {
     $response = match ($action) {
-        'update_episode'        => handleUpdateEpisode($body, $db),
-        'scrape_url'            => handleScrapeUrl($body, $scraper, $db),
-        'add_item'              => handleAddItem($body, $db),
-        'update_item'           => handleUpdateItem($body, $db),
-        'delete_item'           => handleDeleteItem($body, $db),
-        'reorder_items'         => handleReorderItems($body, $db),
-        'reset_episode'         => handleResetEpisode($db),
+        'update_episode'         => handleUpdateEpisode($body, $db),
+        'scrape_url'             => handleScrapeUrl($body, $scraper, $db),
+        'add_item'               => handleAddItem($body, $db),
+        'update_item'            => handleUpdateItem($body, $db),
+        'delete_item'            => handleDeleteItem($body, $db),
+        'reorder_items'          => handleReorderItems($body, $db),
+        'reset_episode'          => handleResetEpisode($db),
         'get_author_suggestions' => handleGetAuthorSuggestions($body, $db),
-        'generate_markdown'     => handleGenerateMarkdown($db, $config),
-        default                 => jsonError('Unknown action', 400),
+        'generate_markdown'      => handleGenerateMarkdown($db, $config),
+        'update_talking_points'  => handleUpdateTalkingPoints($body, $db),
+        'nest_item'              => handleNestItem($body, $db),
+        'extract_item'           => handleExtractItem($body, $db),
+        'reorder_group'          => handleReorderGroup($body, $db),
+        default                  => jsonError('Unknown action', 400),
     };
 } catch (\Throwable $e) {
     http_response_code(500);
@@ -272,7 +276,7 @@ function handleGetAuthorSuggestions(array $body, Database $db): array
 function handleGenerateMarkdown(Database $db, array $config): array
 {
     $episode   = $db->getEpisode();
-    $items     = $db->getItems();
+    $items     = $db->getItemsFlat();
     $generator = new MarkdownGenerator();
     $markdown  = $generator->generate($episode, $items, $config);
 
@@ -283,6 +287,210 @@ function handleGenerateMarkdown(Database $db, array $config): array
     }
 
     return jsonSuccess($data);
+}
+
+function handleUpdateTalkingPoints(array $body, Database $db): array
+{
+    $itemId = filter_var($body['itemId'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($itemId === false || $itemId === null || $itemId <= 0) {
+        return jsonError('itemId must be a positive integer');
+    }
+    if (!array_key_exists('talkingPoints', $body) || !is_string($body['talkingPoints'])) {
+        return jsonError('talkingPoints must be a string');
+    }
+
+    $talkingPoints = $body['talkingPoints'];
+
+    try {
+        $item = $db->updateTalkingPoints($itemId, $talkingPoints);
+    } catch (\InvalidArgumentException $e) {
+        if (str_contains($e->getMessage(), 'not found')) {
+            return jsonError('Item not found', 404);
+        }
+        return jsonError('Talking points can only be set on primary or standalone items.');
+    }
+
+    return jsonSuccess(['item' => $item]);
+}
+
+function handleNestItem(array $body, Database $db): array
+{
+    $itemId   = filter_var($body['itemId']   ?? null, FILTER_VALIDATE_INT);
+    $targetId = filter_var($body['targetId'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($itemId === false || $itemId === null || $itemId <= 0) {
+        return jsonError('itemId must be a positive integer');
+    }
+    if ($targetId === false || $targetId === null || $targetId <= 0) {
+        return jsonError('targetId must be a positive integer');
+    }
+
+    // Guard: self-nesting — reject before any DB work.
+    if ($itemId === $targetId) {
+        return jsonError('itemId and targetId must be different items');
+    }
+
+    $transferTalkingPoints = isset($body['transferTalkingPoints'])
+        ? (bool) $body['transferTalkingPoints']
+        : false;
+
+    // Fetch all items once so we can locate both the source and the target for
+    // pre-flight validation without an extra round-trip later.
+    $allItems   = $db->getItemsFlat();
+    $sourceItem = null;
+    $targetItem = null;
+    foreach (array_merge($allItems['vulnerability'] ?? [], $allItems['news'] ?? []) as $candidate) {
+        if ((int) $candidate['id'] === $itemId) {
+            $sourceItem = $candidate;
+        }
+        if ((int) $candidate['id'] === $targetId) {
+            $targetItem = $candidate;
+        }
+        if ($sourceItem !== null && $targetItem !== null) {
+            break;
+        }
+    }
+
+    if ($sourceItem === null) {
+        return jsonError('Item not found', 400);
+    }
+
+    // Guard: only news section items may be nested (spec §5.2).
+    if ($sourceItem['section'] !== 'news') {
+        return jsonError('Only news items can be nested into story groups');
+    }
+
+    // Guard: circular reference — target must not already be a secondary of itemId.
+    if (
+        $targetItem !== null
+        && $targetItem['parent_id'] !== null
+        && (int) $targetItem['parent_id'] === $itemId
+    ) {
+        return jsonError('Cannot nest an item under its own secondary (circular reference)');
+    }
+
+    $existingTalkingPoints = $sourceItem['talking_points'] ?? '';
+
+    if ($existingTalkingPoints !== '' && !$transferTalkingPoints) {
+        http_response_code(409);
+        return [
+            'success'              => false,
+            'requiresConfirmation' => true,
+            // Spec §5.2: this copy is shown directly in the frontend confirmation dialog.
+            'warning'              => 'This item has recording notes. If you continue, those notes will be '
+                                    . 'transferred to the new primary link. The item will lose its notes.',
+            'fromItemId'           => $itemId,
+            'toItemId'             => $targetId,
+        ];
+    }
+
+    // Pass the talking points into nestItem() so clearing the source, performing
+    // the nest, and writing to the target all happen inside a single transaction.
+    // Passing null means no talking-points work is done.
+    $talkingPointsToTransfer = ($transferTalkingPoints && $existingTalkingPoints !== '')
+        ? $existingTalkingPoints
+        : null;
+
+    try {
+        $db->nestItem($itemId, $targetId, $talkingPointsToTransfer);
+    } catch (\InvalidArgumentException $e) {
+        return jsonError($e->getMessage());
+    }
+
+    $newsItems = $db->getItemsFlat()['news'] ?? [];
+
+    return jsonSuccess(['items' => ['news' => $newsItems]]);
+}
+
+function handleExtractItem(array $body, Database $db): array
+{
+    $itemId = filter_var($body['itemId'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($itemId === false || $itemId === null || $itemId <= 0) {
+        return jsonError('itemId must be a positive integer');
+    }
+
+    $newTopLevelOrder = $body['newTopLevelOrder'] ?? null;
+
+    if (!is_array($newTopLevelOrder) || count($newTopLevelOrder) === 0) {
+        return jsonError('newTopLevelOrder must be a non-empty array of integers');
+    }
+
+    $orderedIds = array_map('intval', $newTopLevelOrder);
+
+    if (!in_array($itemId, $orderedIds, true)) {
+        return jsonError('newTopLevelOrder must contain itemId');
+    }
+
+    // Guard: no duplicate IDs (spec §5.3).
+    if (count($orderedIds) !== count(array_unique($orderedIds))) {
+        return jsonError('newTopLevelOrder must not contain duplicate IDs');
+    }
+
+    // Guard: completeness — the list must be a complete permutation of the
+    // post-extraction top-level set (all current top-level news IDs plus itemId,
+    // which is being promoted from secondary). Mirrors the check in handleReorderItems.
+    $allItems = $db->getItemsFlat();
+    $currentTopLevelIds = array_map(
+        'intval',
+        array_column(
+            array_filter($allItems['news'] ?? [], fn($n) => $n['parent_id'] === null),
+            'id'
+        )
+    );
+    // itemId is currently a secondary; add it to the expected post-extraction set.
+    $expectedIds  = $currentTopLevelIds;
+    $expectedIds[] = $itemId;
+    $expectedIds  = array_values(array_unique($expectedIds));
+    sort($expectedIds);
+    $submittedSorted = $orderedIds;
+    sort($submittedSorted);
+    if ($submittedSorted !== $expectedIds) {
+        return jsonError('newTopLevelOrder must contain every top-level news item ID after extraction', 400);
+    }
+
+    try {
+        $db->extractItem($itemId, $orderedIds);
+    } catch (\InvalidArgumentException $e) {
+        return jsonError($e->getMessage());
+    }
+
+    $newsItems = $db->getItemsFlat()['news'] ?? [];
+
+    return jsonSuccess(['items' => ['news' => $newsItems]]);
+}
+
+function handleReorderGroup(array $body, Database $db): array
+{
+    $primaryId = filter_var($body['primaryId'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($primaryId === false || $primaryId === null || $primaryId <= 0) {
+        return jsonError('primaryId must be a positive integer');
+    }
+
+    $newSecondaryOrder = $body['newSecondaryOrder'] ?? null;
+
+    if (!is_array($newSecondaryOrder) || count($newSecondaryOrder) === 0) {
+        return jsonError('newSecondaryOrder must be a non-empty array of integers');
+    }
+
+    $orderedIds = array_map('intval', $newSecondaryOrder);
+
+    // Guard: no duplicate IDs (spec §5.4).
+    if (count($orderedIds) !== count(array_unique($orderedIds))) {
+        return jsonError('newSecondaryOrder must not contain duplicate IDs');
+    }
+
+    try {
+        $db->reorderGroupItems($primaryId, $orderedIds);
+    } catch (\InvalidArgumentException $e) {
+        return jsonError($e->getMessage());
+    }
+
+    $newsItems = $db->getItemsFlat()['news'] ?? [];
+
+    return jsonSuccess(['items' => ['news' => $newsItems]]);
 }
 
 // -------------------------------------------------------------------------

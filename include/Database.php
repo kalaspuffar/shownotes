@@ -492,9 +492,13 @@ class Database
      * If $itemId currently has children (it was a primary), those children are
      * re-parented to $targetId before $itemId is nested, so no orphans are created.
      *
+     * If $talkingPointsToTransfer is non-null, the source item's talking_points are
+     * cleared and the provided content is written to the target — all within this
+     * method's transaction so the transfer is atomic with the nesting itself.
+     *
      * @return array{primary: array, secondaries: list<array>}
      */
-    public function nestItem(int $itemId, int $targetId): array
+    public function nestItem(int $itemId, int $targetId, ?string $talkingPointsToTransfer = null): array
     {
         if ($itemId === $targetId) {
             throw new \InvalidArgumentException('An item cannot be nested under itself');
@@ -525,6 +529,16 @@ class Database
         $this->pdo->beginTransaction();
 
         try {
+            // Clear talking points on the source before nesting. Once $itemId becomes
+            // a secondary, updateTalkingPoints() would rightly reject writes to it, so
+            // the clear must happen first. Both this and the target write below are
+            // inside this transaction so the transfer is atomic with the nest itself.
+            if ($talkingPointsToTransfer !== null) {
+                $this->pdo->prepare(
+                    'UPDATE items SET talking_points = :tp WHERE id = :id'
+                )->execute([':tp' => '', ':id' => $itemId]);
+            }
+
             // If $itemId has children of its own, re-parent them to $targetId first.
             $childrenStmt = $this->pdo->prepare(
                 'SELECT id FROM items WHERE parent_id = :id'
@@ -566,6 +580,13 @@ class Database
                 ':sort_order' => $nextOrder,
                 ':id'         => $itemId,
             ]);
+
+            // Write the transferred talking points to the target (now the group primary).
+            if ($talkingPointsToTransfer !== null) {
+                $this->pdo->prepare(
+                    'UPDATE items SET talking_points = :tp WHERE id = :id'
+                )->execute([':tp' => $talkingPointsToTransfer, ':id' => $targetId]);
+            }
 
             $this->pdo->commit();
         } catch (\Throwable $e) {
