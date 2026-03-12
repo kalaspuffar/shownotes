@@ -239,7 +239,7 @@ class Database
     }
 
     /** Inserts a new item; assigns the next sort_order within the section; returns the new row. */
-    public function addItem(string $section, string $url, string $title, string $authorName, string $authorUrl): array
+    public function addItem(string $section, string $url, string $title, string $authorName, string $authorUrl, string $talkingPoints = ''): array
     {
         // Compute the next sort_order for this section (0 if the section is empty).
         $maxStmt = $this->pdo->prepare(
@@ -249,16 +249,17 @@ class Database
         $nextOrder = (int) $maxStmt->fetchColumn();
 
         $insertStmt = $this->pdo->prepare(
-            'INSERT INTO items (section, url, title, author_name, author_url, sort_order)
-             VALUES (:section, :url, :title, :author_name, :author_url, :sort_order)'
+            'INSERT INTO items (section, url, title, author_name, author_url, sort_order, talking_points)
+             VALUES (:section, :url, :title, :author_name, :author_url, :sort_order, :talking_points)'
         );
         $insertStmt->execute([
-            ':section'     => $section,
-            ':url'         => $url,
-            ':title'       => $title,
-            ':author_name' => $authorName,
-            ':author_url'  => $authorUrl,
-            ':sort_order'  => $nextOrder,
+            ':section'        => $section,
+            ':url'            => $url,
+            ':title'          => $title,
+            ':author_name'    => $authorName,
+            ':author_url'     => $authorUrl,
+            ':sort_order'     => $nextOrder,
+            ':talking_points' => $talkingPoints !== '' ? $talkingPoints : null,
         ]);
 
         $newId   = (int) $this->pdo->lastInsertId();

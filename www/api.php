@@ -137,11 +137,12 @@ function handleScrapeUrl(array $body, Scraper $scraper, Database $db): array
 function handleAddItem(array $body, Database $db): array
 {
     $allowedSections = ['vulnerability', 'news'];
-    $section    = $body['section'] ?? '';
-    $url        = $body['url'] ?? '';
-    $title      = $body['title'] ?? '';
-    $authorName = $body['author_name'] ?? '';
-    $authorUrl  = $body['author_url'] ?? '';
+    $section       = $body['section'] ?? '';
+    $url           = $body['url'] ?? '';
+    $title         = $body['title'] ?? '';
+    $authorName    = $body['author_name'] ?? '';
+    $authorUrl     = $body['author_url'] ?? '';
+    $talkingPoints = $body['talking_points'] ?? '';
 
     if (!in_array($section, $allowedSections, true)) {
         return jsonError('section must be "vulnerability" or "news"');
@@ -150,7 +151,16 @@ function handleAddItem(array $body, Database $db): array
         return jsonError('url is required');
     }
 
-    $item = $db->addItem($section, $url, (string) $title, (string) $authorName, (string) $authorUrl);
+    // Strip empty lines from talking points (matching handleUpdateTalkingPoints behavior).
+    if (is_string($talkingPoints) && $talkingPoints !== '') {
+        $lines = explode("\n", $talkingPoints);
+        $lines = array_filter($lines, fn(string $line) => trim($line) !== '');
+        $talkingPoints = implode("\n", $lines);
+    } else {
+        $talkingPoints = '';
+    }
+
+    $item = $db->addItem($section, $url, (string) $title, (string) $authorName, (string) $authorUrl, $talkingPoints);
 
     if ($authorName !== '') {
         $domain = extractDomain($url);
