@@ -521,13 +521,14 @@ const articleInputModal = (() => {
 
     function renderModal() {
         const backdrop = document.createElement('div');
-        backdrop.className = 'aim-backdrop';
-        backdrop.setAttribute('role', 'dialog');
-        backdrop.setAttribute('aria-modal', 'true');
-        backdrop.setAttribute('aria-labelledby', 'aim-title');
+        backdrop.className = 'modal-backdrop article-input-backdrop';
+        backdrop.setAttribute('role', 'presentation');
 
         const dialog = document.createElement('div');
-        dialog.className = 'aim-dialog';
+        dialog.className = 'modal-dialog article-input-modal';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'aim-title');
 
         // --- Header ---
         const header = document.createElement('div');
@@ -539,7 +540,7 @@ const articleInputModal = (() => {
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
-        closeBtn.className = 'aim-close-btn';
+        closeBtn.className = 'aim-close';
         closeBtn.setAttribute('aria-label', 'Close');
         closeBtn.textContent = '×';
 
@@ -599,11 +600,11 @@ const articleInputModal = (() => {
         const titleField = document.createElement('div');
         titleField.className = 'aim-field';
         const titleFieldLabel = document.createElement('label');
-        titleFieldLabel.setAttribute('for', 'aim-title-input');
+        titleFieldLabel.setAttribute('for', 'aim-title-field');
         titleFieldLabel.textContent = 'Title';
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
-        titleInput.id = 'aim-title-input';
+        titleInput.id = 'aim-title-field';
         titleInput.autocomplete = 'off';
         titleField.appendChild(titleFieldLabel);
         titleField.appendChild(titleInput);
@@ -641,14 +642,19 @@ const articleInputModal = (() => {
 
         // Notes area (visible only for News section)
         const notesArea = document.createElement('div');
-        notesArea.className = 'aim-notes-area';
+        notesArea.className = 'aim-notes';
+        notesArea.id = 'aim-notes-section';
         const notesLabel = document.createElement('label');
         notesLabel.setAttribute('for', 'aim-talking-points');
-        notesLabel.textContent = 'Recording Notes';
+        notesLabel.appendChild(document.createTextNode('Recording Notes'));
+        const notesHint = document.createElement('span');
+        notesHint.className = 'aim-notes-hint';
+        notesHint.textContent = ' — not included in show notes';
+        notesLabel.appendChild(notesHint);
         const notesTextarea = document.createElement('textarea');
         notesTextarea.id = 'aim-talking-points';
         notesTextarea.placeholder = 'One talking point per line…';
-        notesTextarea.rows = 4;
+        notesTextarea.rows = 6;
         notesTextarea.spellcheck = true;
         notesArea.appendChild(notesLabel);
         notesArea.appendChild(notesTextarea);
@@ -678,8 +684,8 @@ const articleInputModal = (() => {
         addBtn.textContent = 'Add Article';
         addBtn.disabled = true;
 
-        footer.appendChild(addNextBtn);
         footer.appendChild(addBtn);
+        footer.appendChild(addNextBtn);
 
         dialog.appendChild(header);
         dialog.appendChild(body);
@@ -694,23 +700,24 @@ const articleInputModal = (() => {
     function hasContent() {
         if (!backdropEl) return false;
         const url     = backdropEl.querySelector('#aim-url').value.trim();
-        const title   = backdropEl.querySelector('#aim-title-input').value.trim();
+        const title   = backdropEl.querySelector('#aim-title-field').value.trim();
         const author  = backdropEl.querySelector('#aim-author-name').value.trim();
-        const authUrl = backdropEl.querySelector('#aim-author-url').value.trim();
         const notes   = backdropEl.querySelector('#aim-talking-points').value.trim();
-        return !!(url || title || author || authUrl || notes);
+        return !!(url || title || author || notes);
     }
 
-    function clearFields() {
+    function clearFields(preserveSection) {
         if (!backdropEl) return;
         backdropEl.querySelector('#aim-url').value = '';
-        backdropEl.querySelector('#aim-title-input').value = '';
+        backdropEl.querySelector('#aim-title-field').value = '';
         backdropEl.querySelector('#aim-author-name').value = '';
         backdropEl.querySelector('#aim-author-url').value = '';
         backdropEl.querySelector('#aim-talking-points').value = '';
-        backdropEl.querySelector('#aim-section').value = 'news';
-        // Reset notes visibility
-        backdropEl.querySelector('.aim-notes-area').classList.remove('hidden');
+        if (!preserveSection) {
+            backdropEl.querySelector('#aim-section').value = 'news';
+            // Reset notes visibility
+            backdropEl.querySelector('.aim-notes').classList.remove('hidden');
+        }
         // Clear status area
         backdropEl.querySelector('#aim-status').innerHTML = '';
         // Disable submit buttons
@@ -782,14 +789,14 @@ const articleInputModal = (() => {
             const data = json.data;
             clearStatus();
 
-            // Populate fields from response
-            if (data.title) {
-                backdropEl.querySelector('#aim-title-input').value = data.title;
+            // Populate fields only if still empty — user edits are not overwritten
+            if (data.title && !backdropEl.querySelector('#aim-title-field').value.trim()) {
+                backdropEl.querySelector('#aim-title-field').value = data.title;
             }
-            if (data.author_name) {
+            if (data.author_name && !backdropEl.querySelector('#aim-author-name').value.trim()) {
                 backdropEl.querySelector('#aim-author-name').value = data.author_name;
             }
-            if (data.author_url) {
+            if (data.author_url && !backdropEl.querySelector('#aim-author-url').value.trim()) {
                 backdropEl.querySelector('#aim-author-url').value = data.author_url;
             }
 
@@ -866,7 +873,7 @@ const articleInputModal = (() => {
     async function submitArticle(keepOpen) {
         const section = backdropEl.querySelector('#aim-section').value;
         const url     = backdropEl.querySelector('#aim-url').value.trim();
-        const titleVal   = backdropEl.querySelector('#aim-title-input').value.trim();
+        const titleVal   = backdropEl.querySelector('#aim-title-field').value.trim();
         const authorName = backdropEl.querySelector('#aim-author-name').value.trim();
         const authorUrl  = backdropEl.querySelector('#aim-author-url').value.trim();
         const talkingPoints = backdropEl.querySelector('#aim-talking-points').value.trim();
@@ -902,7 +909,7 @@ const articleInputModal = (() => {
             showToast('success', `Article added to ${sectionLabel}`);
 
             if (keepOpen) {
-                clearFields();
+                clearFields(true);
                 backdropEl.querySelector('#aim-url').focus();
             } else {
                 closeModal();
@@ -951,7 +958,7 @@ const articleInputModal = (() => {
         if (hasContent()) {
             const confirmed = await showConfirmDialog({
                 title: 'Discard unsaved changes?',
-                body:  'You have unsaved content. Are you sure you want to discard it?',
+                body:  'The article has not been added. Discard all entered data?',
                 cancelLabel:  'Keep Editing',
                 confirmLabel: 'Discard',
             });
@@ -991,7 +998,7 @@ const articleInputModal = (() => {
         // Wire events
         const urlInput    = backdropEl.querySelector('#aim-url');
         const sectionSel  = backdropEl.querySelector('#aim-section');
-        const closeBtn    = backdropEl.querySelector('.aim-close-btn');
+        const closeBtn    = backdropEl.querySelector('.aim-close');
         const fetchBtn    = backdropEl.querySelector('.aim-fetch-btn');
         const addBtn      = backdropEl.querySelector('#aim-add');
         const addNextBtn  = backdropEl.querySelector('#aim-add-next');
@@ -1011,7 +1018,7 @@ const articleInputModal = (() => {
         // Section selector toggles notes visibility
         let savedNotes = '';
         sectionSel.addEventListener('change', () => {
-            const notesArea = backdropEl.querySelector('.aim-notes-area');
+            const notesArea = backdropEl.querySelector('.aim-notes');
             const textarea  = backdropEl.querySelector('#aim-talking-points');
             if (sectionSel.value === 'vulnerability') {
                 savedNotes = textarea.value;

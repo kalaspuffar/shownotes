@@ -1095,7 +1095,7 @@ body.recording-mode #host-view {
 /* ============================================================
    Article Input Modal
    ============================================================ */
-.aim-backdrop {
+.article-input-backdrop {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.50);
@@ -1116,7 +1116,7 @@ body.recording-mode #host-view {
     to   { opacity: 1; transform: translateY(0); }
 }
 
-.aim-dialog {
+.article-input-modal {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
@@ -1144,7 +1144,7 @@ body.recording-mode #host-view {
     margin: 0;
 }
 
-.aim-close-btn {
+.aim-close {
     background: none;
     border: none;
     font-size: 1.25rem;
@@ -1156,7 +1156,7 @@ body.recording-mode #host-view {
     transition: color 0.1s;
 }
 
-.aim-close-btn:hover {
+.aim-close:hover {
     color: var(--color-text);
 }
 
@@ -1274,20 +1274,41 @@ body.recording-mode #host-view {
 }
 
 /* Notes area — toggled by section selector */
-.aim-notes-area {
+.aim-notes {
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
 
-.aim-notes-area.hidden {
+.aim-notes.hidden {
     display: none;
+}
+
+.aim-notes-hint {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--color-text-muted);
+}
+
+#aim-talking-points {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--spacing-sm);
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    resize: vertical;
+    line-height: 1.6;
+    min-height: 8em;
 }
 
 /* --- Footer --- */
 .aim-footer {
     display: flex;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: var(--spacing-sm);
     padding: var(--spacing-md) var(--spacing-lg);
     border-top: 1px solid var(--color-border);
@@ -1346,18 +1367,26 @@ body.recording-mode #host-view {
 }
 
 /* Confirm dialog stacking above article modal (z-index 600 > 500) */
-.aim-backdrop ~ .modal-backdrop {
+.article-input-backdrop ~ .modal-backdrop {
     z-index: 600;
 }
 
-.aim-backdrop ~ .modal-backdrop .modal-dialog {
+.article-input-backdrop ~ .modal-backdrop .modal-dialog {
     z-index: 601;
+}
+
+/* Focus-visible styling for modal inputs */
+.aim-field input:focus-visible,
+.aim-field select:focus-visible,
+#aim-talking-points:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
 }
 
 /* Reduced-motion: disable all modal animations */
 @media (prefers-reduced-motion: reduce) {
-    .aim-backdrop,
-    .aim-dialog {
+    .article-input-backdrop,
+    .article-input-modal {
         animation: none;
     }
 
