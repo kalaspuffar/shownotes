@@ -37,13 +37,9 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 </head>
 <body>
 
-<header>
+<header id="app-top">
     <h1><?= $pageTitle ?></h1>
     <span id="status-indicator" aria-live="polite" aria-label="Save status"></span>
-</header>
-
-<main>
-<div class="prep-ui">
     <section id="episode-meta" aria-label="Episode metadata">
         <div class="episode-meta-fields">
             <label for="ep-week">Week</label>
@@ -59,83 +55,36 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
                    value="<?= $epYoutube ?>" placeholder="https://www.youtube.com/watch?v=..." aria-label="YouTube URL">
         </div>
     </section>
+</header>
 
-    <div id="workspace">
-        <aside id="add-item-panel" aria-label="Add item">
-            <h2>Add Item</h2>
+<main>
+<div class="prep-ui">
+<div id="content-area">
+    <div id="item-lists">
+        <section id="vulnerability-list" aria-label="<?= $vulnLabel ?>">
+            <h2><?= $vulnLabel ?></h2>
+        </section>
 
-            <div class="form-group">
-                <label for="add-url">URL</label>
-                <input type="url" id="add-url" name="url" placeholder="https://example.com/article">
-            </div>
-
-            <div class="form-group">
-                <label for="add-section">Section</label>
-                <select id="add-section" name="section">
-                    <?php foreach ($config['sections'] as $key => $label): ?>
-                    <option value="<?= htmlspecialchars($key, ENT_QUOTES, 'UTF-8') ?>">
-                        <?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <button type="button" id="btn-fetch" disabled>Fetch Metadata</button>
-
-            <div id="scraped-fields">
-                <div class="form-group">
-                    <label for="add-title">Title</label>
-                    <input type="text" id="add-title" name="title" placeholder="Article title">
-                </div>
-
-                <div class="form-group">
-                    <label for="add-author-name">Author name</label>
-                    <input type="text" id="add-author-name" name="author_name" placeholder="Author name">
-                </div>
-
-                <div class="form-group">
-                    <label for="add-author-url">Author URL</label>
-                    <input type="url" id="add-author-url" name="author_url" placeholder="https://example.com/author">
-                </div>
-            </div>
-
-            <button type="button" id="btn-add" disabled>Add Item</button>
-        </aside>
-
-        <div id="item-lists">
-            <section id="vulnerability-list" aria-label="<?= $vulnLabel ?>">
-                <h2><?= $vulnLabel ?></h2>
-            </section>
-
-            <section id="news-list" aria-label="<?= $newsLabel ?>">
-                <h2><?= $newsLabel ?></h2>
-            </section>
-        </div>
+        <section id="news-list" aria-label="<?= $newsLabel ?>">
+            <h2><?= $newsLabel ?></h2>
+        </section>
     </div>
-
-    <div id="action-bar">
-        <button type="button" id="btn-generate">Generate Show Notes</button>
-        <div class="action-bar__right">
-            <button type="button" id="btn-new-episode">New Episode</button>
-            <button type="button" id="btn-start-recording" class="btn-recording" disabled>Start Recording</button>
-        </div>
-    </div>
-
-    <section id="output-panel" aria-label="Generated Markdown output" hidden>
-        <h2>Generated Markdown</h2>
-        <textarea readonly id="output-markdown" aria-label="Generated Markdown content" rows="20"></textarea>
-        <button type="button" id="btn-copy">📋 Copy to Clipboard</button>
-    </section>
 
     <!-- Visually-hidden live region; JS updates this to announce list mutations
          (item added/deleted) to screen-reader users without visual disruption. -->
     <span class="sr-only" aria-live="polite" id="list-announcer"></span>
+</div><!-- /#content-area -->
 </div><!-- /.prep-ui -->
 <div id="host-view" hidden></div>
 </main>
 
-<footer>
-    <span id="footer-status" aria-live="polite"></span>
+<footer id="app-footer">
+    <button type="button" id="btn-generate">Generate Show Notes</button>
+    <button type="button" id="btn-add-article" class="btn-primary">+ Add Article</button>
+    <div class="action-bar__right">
+        <button type="button" id="btn-new-episode">New Episode</button>
+        <button type="button" id="btn-start-recording" class="btn-recording" disabled>Start Recording</button>
+    </div>
 </footer>
 
 <script>
