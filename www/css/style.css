@@ -66,6 +66,9 @@ body {
     background-color: var(--color-bg);
     color: var(--color-text);
     line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
 }
 
 h1, h2, h3 {
@@ -75,16 +78,20 @@ h1, h2, h3 {
 /* ============================================================
    Header & Episode Meta Bar
    ============================================================ */
-header {
+#app-top {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--spacing-md);
     background-color: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
     padding: var(--spacing-sm) var(--spacing-md);
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
-header h1 {
+#app-top h1 {
     font-size: 1.1rem;
     margin: 0;
     white-space: nowrap;
@@ -97,9 +104,18 @@ header h1 {
 }
 
 #episode-meta {
+    flex-basis: 100%;
     background-color: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
-    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    padding: var(--spacing-sm) 0;
+}
+
+/* ============================================================
+   Content Area — scrollable between sticky header and footer
+   ============================================================ */
+#content-area {
+    flex: 1;
+    overflow-y: auto;
 }
 
 .episode-meta-fields {
@@ -136,100 +152,13 @@ header h1 {
 }
 
 /* ============================================================
-   Two-Column CSS Grid Workspace
-   ============================================================ */
-#workspace {
-    display: grid;
-    grid-template-columns: 300px 1fr;
-    gap: var(--spacing-lg);
-    padding: var(--spacing-lg);
-    align-items: start;
-}
-
-/* ============================================================
-   Add Item Panel
-   ============================================================ */
-#add-item-panel {
-    background-color: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: var(--spacing-md);
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-}
-
-#add-item-panel h2 {
-    font-size: 0.95rem;
-    margin: 0 0 var(--spacing-sm);
-    color: var(--color-text);
-}
-
-.form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.form-group label {
-    font-size: 0.8rem;
-    color: var(--color-text-muted);
-}
-
-.form-group input,
-.form-group select {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 6px var(--spacing-sm);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    color: var(--color-text);
-    background-color: var(--color-surface);
-    width: 100%;
-}
-
-#add-item-panel button {
-    padding: 7px var(--spacing-md);
-    border: none;
-    border-radius: var(--radius);
-    background-color: var(--color-primary);
-    color: #fff;
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: background-color 0.15s;
-}
-
-#add-item-panel button:hover:not(:disabled) {
-    background-color: var(--color-primary-dark);
-}
-
-#add-item-panel button:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-}
-
-#btn-fetch.loading {
-    opacity: 0.7;
-    cursor: wait;
-}
-
-#scraped-fields {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    border-top: 1px solid var(--color-border);
-    padding-top: var(--spacing-sm);
-    margin-top: var(--spacing-sm);
-}
-
-/* ============================================================
-   Section Headings & Item Lists
+   Item Lists — full-width single-column layout
    ============================================================ */
 #item-lists {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
 }
 
 #vulnerability-list,
@@ -342,16 +271,18 @@ header h1 {
 }
 
 /* ============================================================
-   Action Bar (Generate button row above output panel)
+   App Footer — sticky action bar at viewport bottom
    ============================================================ */
-#action-bar {
+#app-footer {
     display: flex;
     align-items: center;
     gap: var(--spacing-md);
     padding: var(--spacing-sm) var(--spacing-lg);
     background-color: var(--color-surface);
     border-top: 1px solid var(--color-border);
-    border-bottom: 1px solid var(--color-border);
+    position: sticky;
+    bottom: 0;
+    z-index: 100;
 }
 
 #btn-generate {
@@ -392,54 +323,28 @@ header h1 {
 }
 
 /* ============================================================
-   Output Panel
+   Primary Button Style (used by #btn-add-article)
    ============================================================ */
-#output-panel {
-    margin: 0 var(--spacing-lg) var(--spacing-lg);
-    background-color: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: var(--spacing-md);
-}
-
-#output-panel h2 {
-    font-size: 1rem;
-    margin-bottom: var(--spacing-sm);
-}
-
-#output-markdown {
-    width: 100%;
-    box-sizing: border-box;
-    height: 280px;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: var(--spacing-sm);
-    resize: vertical;
-    background-color: var(--color-bg);
-    color: var(--color-text);
-}
-
-#btn-copy {
-    margin-top: var(--spacing-sm);
-    padding: 7px var(--spacing-md);
+.btn-primary {
+    padding: 8px var(--spacing-lg);
     border: none;
     border-radius: var(--radius);
     background-color: var(--color-primary);
     color: #fff;
     font-family: var(--font-sans);
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+    font-weight: 600;
     cursor: pointer;
     transition: background-color 0.15s;
 }
 
-#btn-copy:hover {
+.btn-primary:hover:not(:disabled) {
     background-color: var(--color-primary-dark);
 }
 
-#btn-copy.copied {
-    background-color: var(--color-primary-dark);
+.btn-primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 /* ============================================================
@@ -447,12 +352,12 @@ header h1 {
    ============================================================ */
 #toast-container {
     position: fixed;
-    bottom: var(--spacing-lg);
+    bottom: 60px;
     right: var(--spacing-lg);
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
-    z-index: 1000;
+    z-index: 200;
     pointer-events: none;
 }
 
@@ -484,18 +389,6 @@ header h1 {
     background-color: #c07a2b;
 }
 
-/* ============================================================
-   Footer
-   ============================================================ */
-footer {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-    background-color: var(--color-surface);
-    border-top: 1px solid var(--color-border);
-    padding: var(--spacing-sm) var(--spacing-md);
-}
-
 #btn-new-episode {
     padding: 7px var(--spacing-md);
     border: 1px solid var(--color-danger);
@@ -511,11 +404,6 @@ footer {
 #btn-new-episode:hover {
     background-color: var(--color-danger);
     color: #fff;
-}
-
-#footer-status {
-    font-size: 0.8rem;
-    color: var(--color-text-muted);
 }
 
 /* ============================================================
@@ -633,34 +521,6 @@ ul.author-suggest-list {
     pointer-events: none;
 }
 
-/* ============================================================
-   Output Panel — hidden/visible state and textarea
-   ============================================================ */
-
-/* Explicit rule ensures [hidden] attribute wins even if other
-   display rules would otherwise override it. */
-#output-panel[hidden] {
-    display: none;
-}
-
-#output-markdown {
-    width: 100%;
-    box-sizing: border-box;
-    height: 280px;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: var(--spacing-sm);
-    resize: vertical;
-    background-color: var(--color-bg);
-    color: var(--color-text);
-}
-
-#btn-copy.copied {
-    background-color: var(--color-primary);
-    color: #fff;
-}
 
 /* ============================================================
    Dark Mode — system preference overrides
@@ -977,8 +837,10 @@ ul.author-suggest-list {
    Recording Mode — Host View
    ============================================================ */
 
-/* Hide prep UI entirely during recording */
-body.recording-mode .prep-ui {
+/* Hide prep UI, header, and footer entirely during recording */
+body.recording-mode .prep-ui,
+body.recording-mode #app-top,
+body.recording-mode #app-footer {
     display: none !important;
 }
 

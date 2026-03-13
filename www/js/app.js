@@ -505,106 +505,16 @@ async function handleDeleteItem(id, section) {
 }
 
 /* ----------------------------------------------------------
-   10.11 — Fetch button: scrape URL and populate fields
+   10.11 — Add Article button placeholder (Phase 5 will wire
+   this to the Article Input Modal)
    ---------------------------------------------------------- */
-function bindFetchButton() {
-    const btnFetch      = document.getElementById('btn-fetch');
-    const addUrlInput   = document.getElementById('add-url');
-    const titleInput    = document.getElementById('add-title');
-    const authorName    = document.getElementById('add-author-name');
-    const authorUrl     = document.getElementById('add-author-url');
+function bindAddArticleButton() {
+    const btn = document.getElementById('btn-add-article');
+    if (!btn) return;
 
-    btnFetch.addEventListener('click', async () => {
-        const url = addUrlInput.value.trim();
-        if (!url) return;
-
-        // Loading state
-        btnFetch.disabled = true;
-        btnFetch.classList.add('loading');
-        btnFetch.textContent = 'Fetching…';
-
-        try {
-            const data = await apiCall('scrape_url', { url });
-
-            titleInput.value = data.title       || '';
-            authorName.value = data.author_name || '';
-            authorUrl.value  = data.author_url  || '';
-
-            if (data.scrape_error) {
-                showToast('warning', `Partial metadata: ${data.scrape_error}`);
-            }
-        } catch {
-            // Error toast shown by apiCall; leave fields empty
-        } finally {
-            btnFetch.disabled = false;
-            btnFetch.classList.remove('loading');
-            btnFetch.textContent = 'Fetch Metadata';
-            updateAddButtonState();
-        }
+    btn.addEventListener('click', () => {
+        // No-op placeholder — Phase 5 will open the Article Input Modal
     });
-}
-
-/* ----------------------------------------------------------
-   10.12 — Disable Fetch & Add buttons when URL is empty
-   ---------------------------------------------------------- */
-function updateAddButtonState() {
-    const url      = document.getElementById('add-url').value.trim();
-    const btnFetch = document.getElementById('btn-fetch');
-    const btnAdd   = document.getElementById('btn-add');
-
-    btnFetch.disabled = !url;
-    btnAdd.disabled   = !url;
-}
-
-function bindAddUrlInput() {
-    document.getElementById('add-url').addEventListener('input', updateAddButtonState);
-}
-
-/* ----------------------------------------------------------
-   10.13 — Add Item button: submit and reset panel
-   ---------------------------------------------------------- */
-function bindAddButton() {
-    const btnAdd = document.getElementById('btn-add');
-
-    btnAdd.addEventListener('click', async () => {
-        const section    = document.getElementById('add-section').value;
-        const url        = document.getElementById('add-url').value.trim();
-        const title      = document.getElementById('add-title').value.trim();
-        const authorName = document.getElementById('add-author-name').value.trim();
-        const authorUrl  = document.getElementById('add-author-url').value.trim();
-
-        if (!url) return;
-
-        try {
-            const data = await apiCall('add_item', {
-                section,
-                url,
-                title,
-                author_name: authorName,
-                author_url:  authorUrl,
-            });
-
-            // Append to state and re-render
-            state.items[section].push(data.item);
-            if (section === 'vulnerability') renderVulnerabilityList();
-            else renderNewsList();
-
-            updateStartRecordingButton();
-
-            // Reset the add panel
-            resetAddPanel();
-        } catch {
-            // Error toast shown by apiCall
-        }
-    });
-}
-
-function resetAddPanel() {
-    document.getElementById('add-url').value         = '';
-    document.getElementById('add-title').value       = '';
-    document.getElementById('add-author-name').value = '';
-    document.getElementById('add-author-url').value  = '';
-    updateAddButtonState();
 }
 
 /* ----------------------------------------------------------
@@ -769,61 +679,6 @@ function attachAuthorSuggestions(inputEl, item, valueEl, immediateSave) {
     });
 }
 
-/*
- * Binds author suggestion dropdown to the Add Item panel's author_name input.
- */
-function bindAuthorSuggestionsForAddPanel() {
-    const authorNameInput = document.getElementById('add-author-name');
-    const authorUrlInput  = document.getElementById('add-author-url');
-    const addUrlInput     = document.getElementById('add-url');
-
-    let dropdown = null;
-    // Sequence counter to discard stale responses when the user types quickly (Issue 5 fix)
-    let requestSeq = 0;
-
-    function currentDomain() {
-        return extractDomain(addUrlInput.value);
-    }
-
-    function onSelect(author) {
-        authorNameInput.value = author.author_name;
-        authorUrlInput.value  = author.author_url;
-        closeSuggestionDropdown(dropdown);
-        dropdown = null;
-    }
-
-    async function fetchAndRenderSuggestions(query) {
-        const seq = ++requestSeq;
-        try {
-            const data = await apiCall('get_author_suggestions', {
-                domain: currentDomain(),
-                query,
-            });
-            // Discard stale responses (Issue 5 fix)
-            if (seq !== requestSeq) return;
-            closeSuggestionDropdown(dropdown);
-            dropdown = renderSuggestionDropdown(
-                authorNameInput,
-                data.domain_authors || [],
-                data.other_authors  || [],
-                onSelect
-            );
-        } catch {
-            // Suggestions are best-effort; silently swallow errors
-        }
-    }
-
-    const debouncedFetch = createDebounce((query) => fetchAndRenderSuggestions(query), 300);
-
-    authorNameInput.addEventListener('focus', () => fetchAndRenderSuggestions(''));
-    authorNameInput.addEventListener('input', () => debouncedFetch(authorNameInput.value));
-    authorNameInput.addEventListener('blur', () => {
-        setTimeout(() => {
-            closeSuggestionDropdown(dropdown);
-            dropdown = null;
-        }, 150);
-    });
-}
 
 /* ----------------------------------------------------------
    handleDropOnItem(draggedId, targetId)
@@ -1102,20 +957,24 @@ function bindDragAndDrop(containerId, section) {
    Generate Show Notes button
    ---------------------------------------------------------- */
 function bindGenerateButton() {
-    const btn         = document.getElementById('btn-generate');
-    const outputPanel = document.getElementById('output-panel');
-    const textarea    = document.getElementById('output-markdown');
+    const btn = document.getElementById('btn-generate');
 
     btn.addEventListener('click', async () => {
         btn.disabled = true;
         btn.textContent = 'Generating…';
-        btn.classList.add('loading'); // mirrors Fetch button loading pattern (Issue 6 fix)
+        btn.classList.add('loading');
 
         try {
             const data = await apiCall('generate_markdown');
+            const markdown = data.markdown || '';
 
-            textarea.value = data.markdown || '';
-            outputPanel.removeAttribute('hidden');
+            // Copy generated markdown directly to clipboard
+            const copied = await copyTextToClipboard(markdown);
+            if (copied) {
+                showToast('success', 'Show notes generated and copied to clipboard.');
+            } else {
+                showToast('warning', 'Generated but could not copy — check browser permissions.');
+            }
 
             if (Array.isArray(data.warnings)) {
                 for (const warning of data.warnings) {
@@ -1163,33 +1022,12 @@ async function copyTextToClipboard(text) {
     }
 }
 
-function bindCopyButton() {
-    const btn      = document.getElementById('btn-copy');
-    const textarea = document.getElementById('output-markdown');
-
-    btn.addEventListener('click', async () => {
-        const success = await copyTextToClipboard(textarea.value);
-
-        if (success) {
-            btn.textContent = '✓ Copied!';
-            btn.classList.add('copied');
-
-            setTimeout(() => {
-                btn.textContent = '📋 Copy to Clipboard';
-                btn.classList.remove('copied');
-            }, 2000);
-        } else {
-            showToast('error', 'Could not copy to clipboard — please copy the text manually.');
-        }
-    });
-}
 
 /* ----------------------------------------------------------
    New Episode button
    ---------------------------------------------------------- */
 function bindNewEpisodeButton() {
-    const btn         = document.getElementById('btn-new-episode');
-    const outputPanel = document.getElementById('output-panel');
+    const btn = document.getElementById('btn-new-episode');
 
     btn.addEventListener('click', async () => {
         const confirmed = window.confirm(
@@ -1200,16 +1038,13 @@ function bindNewEpisodeButton() {
         try {
             const data = await apiCall('reset_episode');
 
-            state.episode        = data.episode;
-            state.items          = data.items;
+            state.episode = data.episode;
+            state.items   = data.items;
 
             renderEpisodeMeta();
             renderVulnerabilityList();
             renderNewsList();
             updateStartRecordingButton();
-
-            // Hide the output panel so stale markdown is not shown
-            outputPanel.setAttribute('hidden', '');
         } catch {
             // Error toast already shown by apiCall
         }
@@ -1822,8 +1657,8 @@ const recordingModule = (() => {
         msg.textContent =
             'Popup blocked — please allow popups for this page, then try again.';
 
-        const actionBar = document.getElementById('action-bar');
-        if (actionBar) actionBar.insertAdjacentElement('afterend', msg);
+        const appFooter = document.getElementById('app-footer');
+        if (appFooter) appFooter.insertAdjacentElement('beforebegin', msg);
         setTimeout(() => msg.remove(), 6000);
     }
 
@@ -1901,14 +1736,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Bind interactive behaviours
     bindEpisodeMetaListeners();
-    bindFetchButton();
-    bindAddUrlInput();
-    bindAddButton();
-    bindAuthorSuggestionsForAddPanel();
+    bindAddArticleButton();
     bindDragAndDrop('vulnerability-list', 'vulnerability');
     bindDragAndDrop('news-list', 'news');
     bindGenerateButton();
-    bindCopyButton();
     bindNewEpisodeButton();
 
     // Wire "Start Recording" button to recordingModule
@@ -1918,6 +1749,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Ensure buttons start in correct disabled state
-    updateAddButtonState();
     updateStartRecordingButton();
 });
