@@ -811,19 +811,23 @@ ul.author-suggest-list {
     border: 1px solid var(--color-border);
     border-radius: var(--radius, 4px);
     padding: var(--spacing-sm, 6px) var(--spacing-sm, 6px);
-    font-family: inherit;
+    font-family: var(--font-sans);
     font-size: 0.85rem;
     color: var(--color-text);
-    background-color: var(--color-surface, #fff);
+    background-color: var(--color-bg);
     resize: vertical;
-    line-height: 1.4;
+    line-height: 1.6;
+}
+
+.talking-points-textarea:hover,
+#aim-talking-points:hover {
+    border-color: var(--color-primary);
 }
 
 .talking-points-textarea:focus-visible,
 #aim-talking-points:focus-visible {
     outline: 2px solid var(--color-primary);
-    outline-offset: -1px;
-    border-color: var(--color-primary);
+    outline-offset: 2px;
 }
 
 /* Inline variant — compact for the list view */

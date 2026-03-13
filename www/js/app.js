@@ -1321,8 +1321,10 @@ const talkingPointsModule = (() => {
 
         const textarea = document.createElement('textarea');
         textarea.className = 'talking-points-textarea';
+        textarea.dataset.itemId = item.id;
         textarea.setAttribute('aria-label', `Recording notes for item ${item.id}`);
-        textarea.placeholder = 'Add recording notes\u2026';
+        textarea.placeholder = 'One talking point per line...';
+        textarea.rows = 3;
         textarea.spellcheck = true;
 
         // Populate from existing data — join lines with \n
@@ -1347,7 +1349,7 @@ const talkingPointsModule = (() => {
 
         // Immediate save on blur (cancel pending debounce by saving now)
         textarea.addEventListener('blur', () => {
-            debouncedSave.cancel && debouncedSave.cancel();
+            debouncedSave.cancel();
             saveTalkingPoints(item.id, textarea);
         });
 
@@ -1696,9 +1698,18 @@ function handleGlobalPaste(e) {
     // Do not intercept read-only textareas
     if (target.tagName === 'TEXTAREA' && target.readOnly) return;
 
-    const plainText = e.clipboardData.getData('text/plain');
+    const text = e.clipboardData.getData('text/plain');
     e.preventDefault();
-    document.execCommand('insertText', false, plainText);
+
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        target.value = target.value.slice(0, start) + text + target.value.slice(end);
+        target.selectionStart = target.selectionEnd = start + text.length;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (target.isContentEditable) {
+        document.execCommand('insertText', false, text);
+    }
 }
 
 /* ----------------------------------------------------------
