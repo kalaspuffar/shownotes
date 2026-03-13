@@ -142,7 +142,7 @@ function handleAddItem(array $body, Database $db): array
     $title         = $body['title'] ?? '';
     $authorName    = $body['author_name'] ?? '';
     $authorUrl     = $body['author_url'] ?? '';
-    $talkingPoints = $body['talking_points'] ?? '';
+    $rawPoints     = $body['talking_points'] ?? '';
 
     if (!in_array($section, $allowedSections, true)) {
         return jsonError('section must be "vulnerability" or "news"');
@@ -151,10 +151,12 @@ function handleAddItem(array $body, Database $db): array
         return jsonError('url is required');
     }
 
-    // Strip empty lines from talking points (matching handleUpdateTalkingPoints behavior).
-    if (is_string($talkingPoints) && $talkingPoints !== '') {
-        $lines = explode("\n", $talkingPoints);
-        $lines = array_filter($lines, fn(string $line) => trim($line) !== '');
+    // Strip empty lines and trim whitespace from talking points.
+    if (is_string($rawPoints) && $rawPoints !== '') {
+        $lines = array_filter(
+            array_map('trim', explode("\n", $rawPoints)),
+            fn(string $line) => $line !== ''
+        );
         $talkingPoints = implode("\n", $lines);
     } else {
         $talkingPoints = '';
