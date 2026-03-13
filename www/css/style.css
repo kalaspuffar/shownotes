@@ -208,14 +208,13 @@ main {
     flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--spacing-sm);
-    padding: var(--spacing-sm) 0;
-    border-bottom: 1px solid var(--color-border);
+    padding: var(--spacing-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin-bottom: var(--spacing-sm);
     position: relative;
     background-color: var(--color-surface);
-}
-
-.item-row:last-child {
-    border-bottom: none;
 }
 
 .item-fields {
@@ -588,6 +587,14 @@ ul.author-suggest-list {
         background-color: #a05c10;
     }
 
+    /* Card borders need higher contrast on dark surfaces (WCAG AA 3:1).
+       #767876 vs --color-surface (#2c2c2e) → 3.13:1 ✓
+       Sage-tinted gray to stay consistent with the earthy palette. */
+    .item-row {
+        border-color: #767876;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+
     /* Stronger shadow on the dragging placeholder for visibility on dark surfaces */
     .item-row.dragging {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
@@ -702,6 +709,15 @@ ul.author-suggest-list {
 /* Primary row wrapper — full width within the group */
 .story-group__primary {
     width: 100%;
+}
+
+/* Primary item inside a story group inherits group's border treatment,
+   so suppress card styling to avoid double borders */
+.story-group__primary .item-row {
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    margin-bottom: 0;
 }
 
 /* PRIMARY / SECONDARY badge shared pill styles */
