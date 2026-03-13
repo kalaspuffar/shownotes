@@ -72,10 +72,14 @@ async function apiCall(action, payload = {}, options = {}) {
    ---------------------------------------------------------- */
 function createDebounce(fn, delay) {
     let timer;
-    return function (...args) {
+    const debounced = function (...args) {
         clearTimeout(timer);
         timer = setTimeout(() => fn.apply(this, args), delay);
     };
+    debounced.cancel = function () {
+        clearTimeout(timer);
+    };
+    return debounced;
 }
 
 /* ----------------------------------------------------------
@@ -1274,119 +1278,26 @@ const storyGroupModule = (() => {
 
 /* ----------------------------------------------------------
    talkingPointsModule
-   Renders and manages the inline contenteditable bullet editor
-   for per-item recording notes (talking points).
+   Renders and manages the textarea-based editor for per-item
+   recording notes (talking points). Each line in the textarea
+   represents one talking point (newline-separated).
    ---------------------------------------------------------- */
 const talkingPointsModule = (() => {
 
-    /* Creates one <li contenteditable> bullet, wiring the keydown handler. */
-    function createBullet(text) {
-        const li = document.createElement('li');
-        li.contentEditable = 'true';
-        li.spellcheck = true;
-        li.textContent = text;
-
-        if (!text) {
-            // data-placeholder is read by the CSS ::before pseudo-element
-            li.dataset.placeholder = 'Add a talking point…';
-        }
-
-        li.addEventListener('keydown', handleBulletKeydown);
-        return li;
-    }
-
-    /* Returns a .talking-points-panel DOM node for the given item.
-       Splits talking_points on \n to populate the bullet list.
-       Empty talking_points renders one placeholder bullet. */
-    function renderTalkingPointsPanel(item) {
-        const panel = document.createElement('div');
-        panel.className = 'talking-points-panel';
-        panel.dataset.itemId = item.id;
-
-        const label = document.createElement('span');
-        label.className = 'talking-points-panel__label';
-        label.textContent = 'Recording Notes — not included in show notes';
-        label.setAttribute('aria-hidden', 'true');
-        panel.appendChild(label);
-
-        const ul = document.createElement('ul');
-        ul.setAttribute('aria-label', `Recording notes for item ${item.id}`);
-
-        const raw     = item.talking_points || '';
-        // Filter out embedded empty lines (spec §10.3: "ignore blank lines from old data")
-        const lines   = raw.split('\n').filter(l => l.trim() !== '');
-        const bullets = lines.length > 0 ? lines : [''];
-
-        for (const line of bullets) {
-            ul.appendChild(createBullet(line));
-        }
-
-        panel.appendChild(ul);
-
-        // Attach debounced auto-save on any input inside the panel
-        const debouncedSave = createDebounce(
-            () => saveTalkingPoints(item.id, panel),
-            800
-        );
-        panel.addEventListener('input', debouncedSave);
-
-        return panel;
-    }
-
-    /* Joins all <li> textContent values with \n, trims each line,
-       and drops trailing empty lines. */
-    function parseBullets(panelEl) {
-        const lines = [...panelEl.querySelectorAll('li')]
-            .map(li => li.textContent.trim());
-
-        let end = lines.length;
-        while (end > 0 && lines[end - 1] === '') {
-            end--;
-        }
-
-        return lines.slice(0, end).join('\n');
-    }
-
-    /* Enter → insert new <li> after current and focus it.
-       Backspace on empty <li> → remove it and focus the previous. */
-    function handleBulletKeydown(e) {
-        const li = e.currentTarget;
-
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const newLi = createBullet('');
-            if (li.nextSibling) {
-                li.parentNode.insertBefore(newLi, li.nextSibling);
-            } else {
-                li.parentNode.appendChild(newLi);
-            }
-            newLi.focus();
-
-        } else if (e.key === 'Backspace' && li.textContent === '') {
-            // Never remove the last remaining bullet — the editor must always
-            // have at least one <li> to accept new input.
-            if (li.parentNode.querySelectorAll('li').length <= 1) return;
-            e.preventDefault();
-            const prev = li.previousElementSibling;
-            li.remove();
-
-            if (prev) {
-                prev.focus();
-                // Move caret to end of previous bullet
-                const range = document.createRange();
-                const sel   = window.getSelection();
-                range.selectNodeContents(prev);
-                range.collapse(false);
-                sel.removeAllRanges();
-                sel.addRange(range);
-            }
-        }
+    /* Parses textarea value into the storage format: split on \n,
+       trim each line, filter empty lines, re-join with \n. */
+    function parseTextareaValue(textarea) {
+        return textarea.value
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line !== '')
+            .join('\n');
     }
 
     /* Calls update_talking_points. Best-effort — errors are already
        surfaced by apiCall's toast; we do not re-throw here. */
-    async function saveTalkingPoints(itemId, panelEl) {
-        const talkingPoints = parseBullets(panelEl);
+    async function saveTalkingPoints(itemId, textarea) {
+        const talkingPoints = parseTextareaValue(textarea);
         try {
             const data = await apiCall('update_talking_points', { itemId, talkingPoints });
             // Keep in-memory state in sync with the saved value
@@ -1395,6 +1306,54 @@ const talkingPointsModule = (() => {
         } catch {
             // Error toast already shown by apiCall
         }
+    }
+
+    /* Returns a .talking-points-panel DOM node for the given item.
+       Renders a <textarea> with talking_points lines as content. */
+    function renderTalkingPointsPanel(item) {
+        const panel = document.createElement('div');
+        panel.className = 'talking-points-panel';
+        panel.dataset.itemId = item.id;
+
+        const label = document.createElement('label');
+        label.className = 'talking-points-panel__label';
+        label.textContent = 'Recording Notes — not included in show notes';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'talking-points-textarea';
+        textarea.dataset.itemId = item.id;
+        textarea.setAttribute('aria-label', `Recording notes for item ${item.id}`);
+        textarea.placeholder = 'One talking point per line...';
+        textarea.rows = 3;
+        textarea.spellcheck = true;
+
+        // Populate from existing data — join lines with \n
+        const raw = item.talking_points || '';
+        const lines = raw.split('\n').filter(l => l.trim() !== '');
+        textarea.value = lines.join('\n');
+
+        // Associate label with textarea
+        const textareaId = `talking-points-${item.id}`;
+        textarea.id = textareaId;
+        label.setAttribute('for', textareaId);
+
+        panel.appendChild(label);
+        panel.appendChild(textarea);
+
+        // Debounced auto-save on input (800ms)
+        const debouncedSave = createDebounce(
+            () => saveTalkingPoints(item.id, textarea),
+            800
+        );
+        textarea.addEventListener('input', debouncedSave);
+
+        // Immediate save on blur (cancel pending debounce by saving now)
+        textarea.addEventListener('blur', () => {
+            debouncedSave.cancel();
+            saveTalkingPoints(item.id, textarea);
+        });
+
+        return panel;
     }
 
     return { renderTalkingPointsPanel };
@@ -1721,6 +1680,39 @@ const recordingModule = (() => {
 })();
 
 /* ----------------------------------------------------------
+   Global plain-text paste handler
+   Strips rich-text formatting from clipboard content in all
+   editable fields (input, textarea, contenteditable).
+   ---------------------------------------------------------- */
+function handleGlobalPaste(e) {
+    const target = e.target;
+
+    // Only intercept paste in editable contexts
+    const isEditable =
+        target.tagName === 'TEXTAREA' ||
+        (target.tagName === 'INPUT' && !target.readOnly && !target.disabled) ||
+        target.isContentEditable;
+
+    if (!isEditable) return;
+
+    // Do not intercept read-only textareas
+    if (target.tagName === 'TEXTAREA' && target.readOnly) return;
+
+    const text = e.clipboardData.getData('text/plain');
+    e.preventDefault();
+
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        target.value = target.value.slice(0, start) + text + target.value.slice(end);
+        target.selectionStart = target.selectionEnd = start + text.length;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (target.isContentEditable) {
+        document.execCommand('insertText', false, text);
+    }
+}
+
+/* ----------------------------------------------------------
    Initialise on DOMContentLoaded
    ---------------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -1747,6 +1739,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnStartRecording) {
         btnStartRecording.addEventListener('click', () => recordingModule.start());
     }
+
+    // Global plain-text paste: strip formatting from all editable fields
+    document.addEventListener('paste', handleGlobalPaste);
 
     // Ensure buttons start in correct disabled state
     updateStartRecordingButton();

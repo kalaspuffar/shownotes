@@ -802,40 +802,43 @@ ul.author-suggest-list {
     margin-bottom: 4px;
 }
 
-.talking-points-panel ul {
-    list-style: disc;
-    list-style-position: inside;
-    margin: 0;
-    padding: 0;
-    color: var(--color-text);
-}
-
-/* Explicitly colour the disc marker so it remains readable in both
-   light and dark mode regardless of browser cascade behaviour. */
-.talking-points-panel li::marker {
-    color: var(--color-text);
-}
-
-/* Contenteditable bullet items */
-.talking-points-panel li[contenteditable] {
-    min-height: 1.4em;
-    outline: none;
-    border-radius: 2px;
-    padding: 1px 2px;
+/* Shared textarea base styles for talking-points editors */
+.talking-points-textarea,
+#aim-talking-points {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius, 4px);
+    padding: var(--spacing-sm, 6px) var(--spacing-sm, 6px);
+    font-family: var(--font-sans);
     font-size: 0.85rem;
     color: var(--color-text);
+    background-color: var(--color-bg);
+    resize: vertical;
+    line-height: 1.6;
 }
 
-.talking-points-panel li[contenteditable]:focus-visible {
-    box-shadow: 0 0 0 2px var(--color-primary);
-    outline: none;
+.talking-points-textarea:hover,
+#aim-talking-points:hover {
+    border-color: var(--color-primary);
 }
 
-/* Empty bullet placeholder text via ::before */
-.talking-points-panel li[contenteditable][data-placeholder]:empty::before {
-    content: attr(data-placeholder);
-    color: var(--color-text-muted);
-    pointer-events: none;
+.talking-points-textarea:focus-visible,
+#aim-talking-points:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* Inline variant — compact for the list view */
+.talking-points-textarea {
+    min-height: 2.4em;
+    max-height: 200px;
+}
+
+/* Modal variant — more room for writing */
+#aim-talking-points {
+    min-height: 8em;
 }
 
 /* ============================================================
