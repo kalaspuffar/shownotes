@@ -1092,3 +1092,277 @@ body.recording-mode #host-view {
     margin-top: var(--spacing-md);
 }
 
+/* ============================================================
+   Article Input Modal
+   ============================================================ */
+.aim-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.50);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: aim-fade-in 0.15s ease;
+}
+
+@keyframes aim-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes aim-slide-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.aim-dialog {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    width: min(600px, calc(100vw - 48px));
+    max-height: calc(100vh - 48px);
+    display: flex;
+    flex-direction: column;
+    z-index: 501;
+    animation: aim-slide-up 0.2s ease;
+}
+
+/* --- Header --- */
+.aim-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+}
+
+.aim-header h2 {
+    font-size: 1rem;
+    margin: 0;
+}
+
+.aim-close-btn {
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    line-height: 1;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    transition: color 0.1s;
+}
+
+.aim-close-btn:hover {
+    color: var(--color-text);
+}
+
+/* --- Body (scrollable) --- */
+.aim-body {
+    padding: var(--spacing-lg);
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+/* --- Form field groups --- */
+.aim-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.aim-field label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
+.aim-field input,
+.aim-field select {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 6px var(--spacing-sm);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    color: var(--color-text);
+    background-color: var(--color-surface);
+}
+
+.aim-field input:hover,
+.aim-field select:hover {
+    border-color: var(--color-primary);
+}
+
+/* URL row with inline fetch button */
+.aim-url-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: flex-start;
+}
+
+.aim-url-row input {
+    flex: 1;
+}
+
+.aim-fetch-btn {
+    padding: 6px var(--spacing-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.aim-fetch-btn:hover {
+    border-color: var(--color-primary);
+    background: var(--color-bg);
+}
+
+.aim-fetch-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Loading indicator */
+.aim-loading {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.aim-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: aim-spin 0.6s linear infinite;
+}
+
+@keyframes aim-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Inline warning for fetch failures */
+.aim-warning {
+    font-size: 0.85rem;
+    color: #c07a2b;
+    padding: 4px 0;
+}
+
+/* Metadata fields in a two-column row */
+.aim-meta-row {
+    display: flex;
+    gap: var(--spacing-md);
+}
+
+.aim-meta-row .aim-field {
+    flex: 1;
+}
+
+/* Notes area — toggled by section selector */
+.aim-notes-area {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.aim-notes-area.hidden {
+    display: none;
+}
+
+/* --- Footer --- */
+.aim-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-top: 1px solid var(--color-border);
+    flex-shrink: 0;
+}
+
+/* Secondary button style for "Add & Next" */
+.aim-btn-secondary {
+    padding: 7px var(--spacing-md);
+    border: 1px solid var(--color-primary);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--color-primary);
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.aim-btn-secondary:hover:not(:disabled) {
+    background: rgba(74, 124, 89, 0.08);
+}
+
+.aim-btn-secondary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Primary submit button */
+.aim-btn-primary {
+    padding: 7px var(--spacing-md);
+    border: none;
+    border-radius: var(--radius);
+    background-color: var(--color-primary);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.aim-btn-primary:hover:not(:disabled) {
+    background-color: var(--color-primary-dark);
+}
+
+.aim-btn-primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Position author suggestions within modal */
+.aim-field {
+    position: relative;
+}
+
+/* Confirm dialog stacking above article modal (z-index 600 > 500) */
+.aim-backdrop ~ .modal-backdrop {
+    z-index: 600;
+}
+
+.aim-backdrop ~ .modal-backdrop .modal-dialog {
+    z-index: 601;
+}
+
+/* Reduced-motion: disable all modal animations */
+@media (prefers-reduced-motion: reduce) {
+    .aim-backdrop,
+    .aim-dialog {
+        animation: none;
+    }
+
+    .aim-spinner {
+        animation-duration: 1.5s;
+    }
+}
+

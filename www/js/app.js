@@ -509,16 +509,589 @@ async function handleDeleteItem(id, section) {
 }
 
 /* ----------------------------------------------------------
-   10.11 — Add Article button placeholder (Phase 5 will wire
-   this to the Article Input Modal)
+   Article Input Modal
+   Consolidates URL entry, metadata fetch, section selection,
+   talking-point notes, and submission into a single dialog.
+   ---------------------------------------------------------- */
+const articleInputModal = (() => {
+    let backdropEl = null;
+    let abortController = null;
+
+    /* ---------- DOM construction ---------- */
+
+    function renderModal() {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'aim-backdrop';
+        backdrop.setAttribute('role', 'dialog');
+        backdrop.setAttribute('aria-modal', 'true');
+        backdrop.setAttribute('aria-labelledby', 'aim-title');
+
+        const dialog = document.createElement('div');
+        dialog.className = 'aim-dialog';
+
+        // --- Header ---
+        const header = document.createElement('div');
+        header.className = 'aim-header';
+
+        const title = document.createElement('h2');
+        title.id = 'aim-title';
+        title.textContent = 'Add Article';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'aim-close-btn';
+        closeBtn.setAttribute('aria-label', 'Close');
+        closeBtn.textContent = '×';
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+
+        // --- Body ---
+        const body = document.createElement('div');
+        body.className = 'aim-body';
+
+        // URL field with fetch button
+        const urlField = document.createElement('div');
+        urlField.className = 'aim-field';
+        const urlLabel = document.createElement('label');
+        urlLabel.setAttribute('for', 'aim-url');
+        urlLabel.textContent = 'URL';
+        const urlRow = document.createElement('div');
+        urlRow.className = 'aim-url-row';
+        const urlInput = document.createElement('input');
+        urlInput.type = 'url';
+        urlInput.id = 'aim-url';
+        urlInput.placeholder = 'https://example.com/article';
+        urlInput.autocomplete = 'off';
+        const fetchBtn = document.createElement('button');
+        fetchBtn.type = 'button';
+        fetchBtn.className = 'aim-fetch-btn';
+        fetchBtn.textContent = 'Fetch Metadata';
+        urlRow.appendChild(urlInput);
+        urlRow.appendChild(fetchBtn);
+        urlField.appendChild(urlLabel);
+        urlField.appendChild(urlRow);
+
+        // Status area (loading / warning)
+        const statusArea = document.createElement('div');
+        statusArea.id = 'aim-status';
+
+        // Section selector
+        const sectionField = document.createElement('div');
+        sectionField.className = 'aim-field';
+        const sectionLabel = document.createElement('label');
+        sectionLabel.setAttribute('for', 'aim-section');
+        sectionLabel.textContent = 'Section';
+        const sectionSelect = document.createElement('select');
+        sectionSelect.id = 'aim-section';
+        const newsOption = document.createElement('option');
+        newsOption.value = 'news';
+        newsOption.textContent = 'News';
+        const vulnOption = document.createElement('option');
+        vulnOption.value = 'vulnerability';
+        vulnOption.textContent = 'Vulnerability';
+        sectionSelect.appendChild(newsOption);
+        sectionSelect.appendChild(vulnOption);
+        sectionField.appendChild(sectionLabel);
+        sectionField.appendChild(sectionSelect);
+
+        // Title field
+        const titleField = document.createElement('div');
+        titleField.className = 'aim-field';
+        const titleFieldLabel = document.createElement('label');
+        titleFieldLabel.setAttribute('for', 'aim-title-input');
+        titleFieldLabel.textContent = 'Title';
+        const titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.id = 'aim-title-input';
+        titleInput.autocomplete = 'off';
+        titleField.appendChild(titleFieldLabel);
+        titleField.appendChild(titleInput);
+
+        // Author name + author URL row
+        const metaRow = document.createElement('div');
+        metaRow.className = 'aim-meta-row';
+
+        const authorField = document.createElement('div');
+        authorField.className = 'aim-field';
+        const authorLabel = document.createElement('label');
+        authorLabel.setAttribute('for', 'aim-author-name');
+        authorLabel.textContent = 'Author';
+        const authorInput = document.createElement('input');
+        authorInput.type = 'text';
+        authorInput.id = 'aim-author-name';
+        authorInput.autocomplete = 'off';
+        authorField.appendChild(authorLabel);
+        authorField.appendChild(authorInput);
+
+        const authorUrlField = document.createElement('div');
+        authorUrlField.className = 'aim-field';
+        const authorUrlLabel = document.createElement('label');
+        authorUrlLabel.setAttribute('for', 'aim-author-url');
+        authorUrlLabel.textContent = 'Author URL';
+        const authorUrlInput = document.createElement('input');
+        authorUrlInput.type = 'url';
+        authorUrlInput.id = 'aim-author-url';
+        authorUrlInput.autocomplete = 'off';
+        authorUrlField.appendChild(authorUrlLabel);
+        authorUrlField.appendChild(authorUrlInput);
+
+        metaRow.appendChild(authorField);
+        metaRow.appendChild(authorUrlField);
+
+        // Notes area (visible only for News section)
+        const notesArea = document.createElement('div');
+        notesArea.className = 'aim-notes-area';
+        const notesLabel = document.createElement('label');
+        notesLabel.setAttribute('for', 'aim-talking-points');
+        notesLabel.textContent = 'Recording Notes';
+        const notesTextarea = document.createElement('textarea');
+        notesTextarea.id = 'aim-talking-points';
+        notesTextarea.placeholder = 'One talking point per line…';
+        notesTextarea.rows = 4;
+        notesTextarea.spellcheck = true;
+        notesArea.appendChild(notesLabel);
+        notesArea.appendChild(notesTextarea);
+
+        body.appendChild(urlField);
+        body.appendChild(statusArea);
+        body.appendChild(sectionField);
+        body.appendChild(titleField);
+        body.appendChild(metaRow);
+        body.appendChild(notesArea);
+
+        // --- Footer ---
+        const footer = document.createElement('div');
+        footer.className = 'aim-footer';
+
+        const addNextBtn = document.createElement('button');
+        addNextBtn.type = 'button';
+        addNextBtn.className = 'aim-btn-secondary';
+        addNextBtn.id = 'aim-add-next';
+        addNextBtn.textContent = 'Add & Next';
+        addNextBtn.disabled = true;
+
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'aim-btn-primary';
+        addBtn.id = 'aim-add';
+        addBtn.textContent = 'Add Article';
+        addBtn.disabled = true;
+
+        footer.appendChild(addNextBtn);
+        footer.appendChild(addBtn);
+
+        dialog.appendChild(header);
+        dialog.appendChild(body);
+        dialog.appendChild(footer);
+        backdrop.appendChild(dialog);
+
+        return backdrop;
+    }
+
+    /* ---------- Helpers ---------- */
+
+    function hasContent() {
+        if (!backdropEl) return false;
+        const url     = backdropEl.querySelector('#aim-url').value.trim();
+        const title   = backdropEl.querySelector('#aim-title-input').value.trim();
+        const author  = backdropEl.querySelector('#aim-author-name').value.trim();
+        const authUrl = backdropEl.querySelector('#aim-author-url').value.trim();
+        const notes   = backdropEl.querySelector('#aim-talking-points').value.trim();
+        return !!(url || title || author || authUrl || notes);
+    }
+
+    function clearFields() {
+        if (!backdropEl) return;
+        backdropEl.querySelector('#aim-url').value = '';
+        backdropEl.querySelector('#aim-title-input').value = '';
+        backdropEl.querySelector('#aim-author-name').value = '';
+        backdropEl.querySelector('#aim-author-url').value = '';
+        backdropEl.querySelector('#aim-talking-points').value = '';
+        backdropEl.querySelector('#aim-section').value = 'news';
+        // Reset notes visibility
+        backdropEl.querySelector('.aim-notes-area').classList.remove('hidden');
+        // Clear status area
+        backdropEl.querySelector('#aim-status').innerHTML = '';
+        // Disable submit buttons
+        updateSubmitButtons();
+    }
+
+    function updateSubmitButtons() {
+        if (!backdropEl) return;
+        const urlValue = backdropEl.querySelector('#aim-url').value.trim();
+        const disabled = urlValue.length === 0;
+        backdropEl.querySelector('#aim-add').disabled = disabled;
+        backdropEl.querySelector('#aim-add-next').disabled = disabled;
+    }
+
+    function showLoading() {
+        const statusArea = backdropEl.querySelector('#aim-status');
+        statusArea.innerHTML = '';
+        const loading = document.createElement('div');
+        loading.className = 'aim-loading';
+        const spinner = document.createElement('span');
+        spinner.className = 'aim-spinner';
+        const text = document.createElement('span');
+        text.textContent = 'Fetching metadata…';
+        loading.appendChild(spinner);
+        loading.appendChild(text);
+        statusArea.appendChild(loading);
+    }
+
+    function showWarning(message) {
+        const statusArea = backdropEl.querySelector('#aim-status');
+        statusArea.innerHTML = '';
+        const warning = document.createElement('div');
+        warning.className = 'aim-warning';
+        warning.textContent = message;
+        statusArea.appendChild(warning);
+    }
+
+    function clearStatus() {
+        if (!backdropEl) return;
+        backdropEl.querySelector('#aim-status').innerHTML = '';
+    }
+
+    /* ---------- Auto-fetch on paste ---------- */
+
+    async function fetchMetadata(url) {
+        // Abort any previous in-flight request
+        if (abortController) {
+            abortController.abort();
+        }
+        abortController = new AbortController();
+
+        showLoading();
+
+        try {
+            const response = await fetch('api.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'scrape_url', url }),
+                signal: abortController.signal,
+            });
+
+            const json = await response.json();
+
+            if (!json.success) {
+                showWarning(json.error || 'Could not fetch metadata.');
+                return;
+            }
+
+            const data = json.data;
+            clearStatus();
+
+            // Populate fields from response
+            if (data.title) {
+                backdropEl.querySelector('#aim-title-input').value = data.title;
+            }
+            if (data.author_name) {
+                backdropEl.querySelector('#aim-author-name').value = data.author_name;
+            }
+            if (data.author_url) {
+                backdropEl.querySelector('#aim-author-url').value = data.author_url;
+            }
+
+            if (data.scrape_error) {
+                showWarning(data.scrape_error);
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') return; // Silently ignore aborted requests
+            showWarning('Could not fetch metadata — check the URL and try again.');
+        } finally {
+            abortController = null;
+        }
+    }
+
+    function handleUrlPaste(e) {
+        // Use microtask delay so the pasted value populates the input first
+        Promise.resolve().then(() => {
+            const value = e.target.value.trim();
+            if (/^https?:\/\//.test(value)) {
+                fetchMetadata(value);
+            }
+        });
+    }
+
+    /* ---------- Author suggestions inside modal ---------- */
+
+    function attachModalAuthorSuggestions() {
+        const authorInput = backdropEl.querySelector('#aim-author-name');
+        const authorUrlInput = backdropEl.querySelector('#aim-author-url');
+        const urlInput = backdropEl.querySelector('#aim-url');
+
+        let dropdown = null;
+        let requestSeq = 0;
+
+        function onSelect(author) {
+            authorInput.value = author.author_name;
+            authorUrlInput.value = author.author_url || '';
+            closeSuggestionDropdown(dropdown);
+            dropdown = null;
+        }
+
+        async function fetchAndRenderSuggestions(query) {
+            const domain = extractDomain(urlInput.value.trim());
+            const seq = ++requestSeq;
+            try {
+                const data = await apiCall('get_author_suggestions', { domain, query });
+                if (seq !== requestSeq) return;
+                closeSuggestionDropdown(dropdown);
+                dropdown = renderSuggestionDropdown(
+                    authorInput,
+                    data.domain_authors || [],
+                    data.other_authors  || [],
+                    onSelect
+                );
+            } catch {
+                // Suggestions are best-effort
+            }
+        }
+
+        const debouncedFetch = createDebounce((q) => fetchAndRenderSuggestions(q), 300);
+
+        authorInput.addEventListener('focus', () => fetchAndRenderSuggestions(''));
+        authorInput.addEventListener('input', () => debouncedFetch(authorInput.value));
+        authorInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                closeSuggestionDropdown(dropdown);
+                dropdown = null;
+            }, 150);
+        });
+    }
+
+    /* ---------- Submit flows ---------- */
+
+    async function submitArticle(keepOpen) {
+        const section = backdropEl.querySelector('#aim-section').value;
+        const url     = backdropEl.querySelector('#aim-url').value.trim();
+        const titleVal   = backdropEl.querySelector('#aim-title-input').value.trim();
+        const authorName = backdropEl.querySelector('#aim-author-name').value.trim();
+        const authorUrl  = backdropEl.querySelector('#aim-author-url').value.trim();
+        const talkingPoints = backdropEl.querySelector('#aim-talking-points').value.trim();
+
+        const payload = {
+            section,
+            url,
+            title: titleVal,
+            author_name: authorName,
+            author_url: authorUrl,
+        };
+
+        // Only include talking_points for news section when there is content
+        if (section === 'news' && talkingPoints) {
+            payload.talking_points = talkingPoints;
+        }
+
+        try {
+            const data = await apiCall('add_item', payload);
+
+            // Update local state and re-render the affected section
+            const newItem = data.item;
+            state.items[section].push(newItem);
+
+            if (section === 'vulnerability') {
+                renderVulnerabilityList();
+            } else {
+                renderNewsList();
+            }
+            updateStartRecordingButton();
+
+            const sectionLabel = section === 'news' ? 'News' : 'Vulnerability';
+            showToast('success', `Article added to ${sectionLabel}`);
+
+            if (keepOpen) {
+                clearFields();
+                backdropEl.querySelector('#aim-url').focus();
+            } else {
+                closeModal();
+            }
+        } catch {
+            // Error toast already displayed by apiCall
+        }
+    }
+
+    /* ---------- Focus trapping ---------- */
+
+    function getFocusableElements() {
+        if (!backdropEl) return [];
+        return Array.from(
+            backdropEl.querySelectorAll(
+                'input, select, textarea, button, [tabindex]:not([tabindex="-1"])'
+            )
+        ).filter(el => !el.disabled && el.offsetParent !== null);
+    }
+
+    function handleFocusTrap(e) {
+        if (e.key !== 'Tab') return;
+
+        const focusable = getFocusableElements();
+        if (focusable.length === 0) return;
+
+        const first = focusable[0];
+        const last  = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+            if (document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else {
+            if (document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
+    }
+
+    /* ---------- Dismiss handling ---------- */
+
+    async function attemptClose() {
+        if (hasContent()) {
+            const confirmed = await showConfirmDialog({
+                title: 'Discard unsaved changes?',
+                body:  'You have unsaved content. Are you sure you want to discard it?',
+                cancelLabel:  'Keep Editing',
+                confirmLabel: 'Discard',
+            });
+            if (!confirmed) return;
+        }
+        closeModal();
+    }
+
+    function handleKeydown(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            attemptClose();
+            return;
+        }
+        handleFocusTrap(e);
+    }
+
+    function handleBackdropClick(e) {
+        if (e.target === backdropEl) {
+            attemptClose();
+        }
+    }
+
+    /* ---------- Public API ---------- */
+
+    function isOpen() {
+        return backdropEl !== null;
+    }
+
+    function openModal() {
+        if (isOpen()) return;
+
+        backdropEl = renderModal();
+        document.body.appendChild(backdropEl);
+
+        // Wire events
+        const urlInput    = backdropEl.querySelector('#aim-url');
+        const sectionSel  = backdropEl.querySelector('#aim-section');
+        const closeBtn    = backdropEl.querySelector('.aim-close-btn');
+        const fetchBtn    = backdropEl.querySelector('.aim-fetch-btn');
+        const addBtn      = backdropEl.querySelector('#aim-add');
+        const addNextBtn  = backdropEl.querySelector('#aim-add-next');
+
+        // URL input events
+        urlInput.addEventListener('paste', handleUrlPaste);
+        urlInput.addEventListener('input', updateSubmitButtons);
+
+        // Fetch button
+        fetchBtn.addEventListener('click', () => {
+            const url = urlInput.value.trim();
+            if (/^https?:\/\//.test(url)) {
+                fetchMetadata(url);
+            }
+        });
+
+        // Section selector toggles notes visibility
+        let savedNotes = '';
+        sectionSel.addEventListener('change', () => {
+            const notesArea = backdropEl.querySelector('.aim-notes-area');
+            const textarea  = backdropEl.querySelector('#aim-talking-points');
+            if (sectionSel.value === 'vulnerability') {
+                savedNotes = textarea.value;
+                notesArea.classList.add('hidden');
+            } else {
+                notesArea.classList.remove('hidden');
+                textarea.value = savedNotes;
+            }
+        });
+
+        // Close button
+        closeBtn.addEventListener('click', () => attemptClose());
+
+        // Backdrop click
+        backdropEl.addEventListener('click', handleBackdropClick);
+
+        // Keyboard: Escape + focus trap
+        backdropEl.addEventListener('keydown', handleKeydown);
+
+        // Submit buttons
+        addBtn.addEventListener('click', () => submitArticle(false));
+        addNextBtn.addEventListener('click', () => submitArticle(true));
+
+        // Author suggestions
+        attachModalAuthorSuggestions();
+
+        // Auto-focus URL input
+        urlInput.focus();
+    }
+
+    function closeModal() {
+        if (!backdropEl) return;
+
+        // Abort any in-flight fetch
+        if (abortController) {
+            abortController.abort();
+            abortController = null;
+        }
+
+        backdropEl.remove();
+        backdropEl = null;
+
+        // Restore focus to the trigger button
+        const triggerBtn = document.getElementById('btn-add-article');
+        if (triggerBtn) triggerBtn.focus();
+    }
+
+    return { openModal, closeModal, isOpen };
+})();
+
+/* ----------------------------------------------------------
+   Keyboard shortcut: Ctrl+Shift+A opens Article Input Modal
+   ---------------------------------------------------------- */
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+        // Guard: recording mode active
+        if (document.body.classList.contains('recording-mode')) return;
+        // Guard: article modal already open
+        if (articleInputModal.isOpen()) return;
+        // Guard: another modal is visible
+        if (document.querySelector('.modal-backdrop')) return;
+
+        e.preventDefault();
+        articleInputModal.openModal();
+    }
+});
+
+/* ----------------------------------------------------------
+   10.11 — Add Article button — opens Article Input Modal
    ---------------------------------------------------------- */
 function bindAddArticleButton() {
     const btn = document.getElementById('btn-add-article');
     if (!btn) return;
 
     btn.addEventListener('click', () => {
-        // No-op placeholder — Phase 5 will open the Article Input Modal
+        articleInputModal.openModal();
     });
+
+    // Tooltip showing keyboard shortcut
+    btn.title = 'Add Article (Ctrl+Shift+A)';
 }
 
 /* ----------------------------------------------------------
