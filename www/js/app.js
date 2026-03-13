@@ -1557,7 +1557,7 @@ const markdownOverlay = (() => {
 
         // Dialog
         const dialog = document.createElement('div');
-        dialog.className = 'markdown-overlay';
+        dialog.className = 'modal-dialog markdown-overlay';
         dialog.setAttribute('role', 'dialog');
         dialog.setAttribute('aria-modal', 'true');
         dialog.setAttribute('aria-labelledby', 'mo-title');
@@ -1568,12 +1568,12 @@ const markdownOverlay = (() => {
 
         const title = document.createElement('h2');
         title.id = 'mo-title';
-        title.textContent = 'Generated Show Notes';
+        title.textContent = 'Generated Markdown';
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'mo-close';
-        closeBtn.setAttribute('aria-label', 'Close overlay');
+        closeBtn.setAttribute('aria-label', 'Close');
         closeBtn.textContent = '\u00d7';
         closeBtn.addEventListener('click', closeOverlay);
 
@@ -1587,7 +1587,8 @@ const markdownOverlay = (() => {
         const textarea = document.createElement('textarea');
         textarea.id = 'mo-markdown';
         textarea.readOnly = true;
-        textarea.setAttribute('aria-label', 'Generated markdown content');
+        textarea.setAttribute('aria-label', 'Generated Markdown content');
+        textarea.rows = 20;
         textarea.value = markdown;
 
         body.appendChild(textarea);
@@ -1599,8 +1600,7 @@ const markdownOverlay = (() => {
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.id = 'mo-copy';
-        copyBtn.className = 'btn-primary';
-        copyBtn.textContent = 'Copy to Clipboard';
+        copyBtn.textContent = '📋 Copy to Clipboard';
         copyBtn.addEventListener('click', handleCopy);
 
         footer.appendChild(copyBtn);
@@ -1650,7 +1650,7 @@ const markdownOverlay = (() => {
             copyBtn.classList.add('copied');
 
             setTimeout(() => {
-                copyBtn.textContent = 'Copy to Clipboard';
+                copyBtn.textContent = '📋 Copy to Clipboard';
                 copyBtn.classList.remove('copied');
             }, 2000);
         } else {
@@ -1668,11 +1668,37 @@ const markdownOverlay = (() => {
     }
 
     /**
-     * Close on Escape key.
+     * Handle Escape to close and Tab to trap focus within the overlay.
      */
     function handleKeydown(e) {
         if (e.key === 'Escape') {
             closeOverlay();
+            return;
+        }
+
+        if (e.key === 'Tab') {
+            const focusable = Array.from(
+                backdropEl.querySelectorAll(
+                    'button, textarea, [tabindex]:not([tabindex="-1"])'
+                )
+            ).filter(el => !el.disabled && el.offsetParent !== null);
+
+            if (focusable.length === 0) return;
+
+            const first = focusable[0];
+            const last  = focusable[focusable.length - 1];
+
+            if (e.shiftKey) {
+                if (document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                }
+            } else {
+                if (document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
         }
     }
 

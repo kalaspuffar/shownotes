@@ -1428,7 +1428,7 @@ body.recording-mode #host-view {
 }
 
 .mo-header h2 {
-    font-size: 1rem;
+    font-size: 1.1rem;
     margin: 0;
 }
 
@@ -1446,12 +1446,15 @@ body.recording-mode #host-view {
 
 .mo-close:hover {
     color: var(--color-text);
+    background: var(--color-bg);
 }
 
-/* --- Body (scrollable) --- */
+/* --- Body --- */
 .mo-body {
     padding: var(--spacing-lg);
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     flex: 1;
 }
 
@@ -1468,7 +1471,8 @@ body.recording-mode #host-view {
     font-size: 0.85rem;
     color: var(--color-text);
     background-color: var(--color-bg);
-    resize: vertical;
+    flex: 1;
+    resize: none;
     line-height: 1.6;
 }
 
@@ -1479,15 +1483,28 @@ body.recording-mode #host-view {
 
 /* --- Footer --- */
 .mo-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--spacing-sm);
     padding: var(--spacing-md) var(--spacing-lg);
     border-top: 1px solid var(--color-border);
     flex-shrink: 0;
 }
 
-/* Copy button — "Copied!" feedback state */
+/* Copy button */
+#mo-copy {
+    padding: 7px var(--spacing-md);
+    border: none;
+    border-radius: var(--radius);
+    background-color: var(--color-primary);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+#mo-copy:hover {
+    background-color: var(--color-primary-dark);
+}
+
 #mo-copy.copied {
     background-color: var(--color-primary-dark);
 }
