@@ -57,8 +57,9 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
     </section>
 </header>
 
-<main id="content-area">
+<main>
 <div class="prep-ui">
+<div id="content-area">
     <div id="item-lists">
         <section id="vulnerability-list" aria-label="<?= $vulnLabel ?>">
             <h2><?= $vulnLabel ?></h2>
@@ -72,6 +73,7 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
     <!-- Visually-hidden live region; JS updates this to announce list mutations
          (item added/deleted) to screen-reader users without visual disruption. -->
     <span class="sr-only" aria-live="polite" id="list-announcer"></span>
+</div><!-- /#content-area -->
 </div><!-- /.prep-ui -->
 <div id="host-view" hidden></div>
 </main>
