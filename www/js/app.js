@@ -1538,6 +1538,175 @@ function bindDragAndDrop(containerId, section) {
 }
 
 /* ----------------------------------------------------------
+   Markdown Overlay — modal for viewing and copying generated
+   show notes markdown, replacing the old static output panel.
+   ---------------------------------------------------------- */
+const markdownOverlay = (() => {
+    let backdropEl = null;
+
+    /**
+     * Build and display the overlay with the provided markdown content.
+     */
+    function openOverlay(markdown) {
+        if (backdropEl) return;
+
+        // Backdrop
+        backdropEl = document.createElement('div');
+        backdropEl.className = 'modal-backdrop markdown-overlay-backdrop';
+        backdropEl.setAttribute('role', 'presentation');
+
+        // Dialog
+        const dialog = document.createElement('div');
+        dialog.className = 'modal-dialog markdown-overlay';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'mo-title');
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'mo-header';
+
+        const title = document.createElement('h2');
+        title.id = 'mo-title';
+        title.textContent = 'Generated Markdown';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'mo-close';
+        closeBtn.setAttribute('aria-label', 'Close');
+        closeBtn.textContent = '\u00d7';
+        closeBtn.addEventListener('click', closeOverlay);
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+
+        // Body — read-only textarea with markdown content
+        const body = document.createElement('div');
+        body.className = 'mo-body';
+
+        const textarea = document.createElement('textarea');
+        textarea.id = 'mo-markdown';
+        textarea.readOnly = true;
+        textarea.setAttribute('aria-label', 'Generated Markdown content');
+        textarea.rows = 20;
+        textarea.value = markdown;
+
+        body.appendChild(textarea);
+
+        // Footer — copy button
+        const footer = document.createElement('div');
+        footer.className = 'mo-footer';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.id = 'mo-copy';
+        copyBtn.textContent = '📋 Copy to Clipboard';
+        copyBtn.addEventListener('click', handleCopy);
+
+        footer.appendChild(copyBtn);
+
+        // Assemble dialog
+        dialog.appendChild(header);
+        dialog.appendChild(body);
+        dialog.appendChild(footer);
+        backdropEl.appendChild(dialog);
+        document.body.appendChild(backdropEl);
+
+        // Dismiss handlers
+        backdropEl.addEventListener('click', handleBackdropClick);
+        document.addEventListener('keydown', handleKeydown);
+
+        // Focus the copy button — the primary action
+        copyBtn.focus();
+    }
+
+    /**
+     * Close the overlay and clean up DOM and listeners.
+     */
+    function closeOverlay() {
+        if (!backdropEl) return;
+
+        document.removeEventListener('keydown', handleKeydown);
+        backdropEl.remove();
+        backdropEl = null;
+
+        // Return focus to the generate button
+        const generateBtn = document.getElementById('btn-generate');
+        if (generateBtn) generateBtn.focus();
+    }
+
+    /**
+     * Copy textarea content to clipboard with visual feedback.
+     */
+    async function handleCopy() {
+        const textarea = document.getElementById('mo-markdown');
+        const copyBtn = document.getElementById('mo-copy');
+        if (!textarea || !copyBtn) return;
+
+        const copied = await copyTextToClipboard(textarea.value);
+
+        if (copied) {
+            copyBtn.textContent = 'Copied!';
+            copyBtn.classList.add('copied');
+
+            setTimeout(() => {
+                copyBtn.textContent = '📋 Copy to Clipboard';
+                copyBtn.classList.remove('copied');
+            }, 2000);
+        } else {
+            showToast('warning', 'Could not copy — check browser permissions.');
+        }
+    }
+
+    /**
+     * Close when clicking the backdrop (outside the dialog).
+     */
+    function handleBackdropClick(e) {
+        if (e.target === backdropEl) {
+            closeOverlay();
+        }
+    }
+
+    /**
+     * Handle Escape to close and Tab to trap focus within the overlay.
+     */
+    function handleKeydown(e) {
+        if (e.key === 'Escape') {
+            closeOverlay();
+            return;
+        }
+
+        if (e.key === 'Tab') {
+            const focusable = Array.from(
+                backdropEl.querySelectorAll(
+                    'button, textarea, [tabindex]:not([tabindex="-1"])'
+                )
+            ).filter(el => !el.disabled && el.offsetParent !== null);
+
+            if (focusable.length === 0) return;
+
+            const first = focusable[0];
+            const last  = focusable[focusable.length - 1];
+
+            if (e.shiftKey) {
+                if (document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                }
+            } else {
+                if (document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
+        }
+    }
+
+    return { openOverlay, closeOverlay };
+})();
+
+
+/* ----------------------------------------------------------
    Generate Show Notes button
    ---------------------------------------------------------- */
 function bindGenerateButton() {
@@ -1552,13 +1721,7 @@ function bindGenerateButton() {
             const data = await apiCall('generate_markdown');
             const markdown = data.markdown || '';
 
-            // Copy generated markdown directly to clipboard
-            const copied = await copyTextToClipboard(markdown);
-            if (copied) {
-                showToast('success', 'Show notes generated and copied to clipboard.');
-            } else {
-                showToast('warning', 'Generated but could not copy — check browser permissions.');
-            }
+            markdownOverlay.openOverlay(markdown);
 
             if (Array.isArray(data.warnings)) {
                 for (const warning of data.warnings) {
