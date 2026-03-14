@@ -1140,14 +1140,14 @@ body.recording-mode #host-view {
 }
 
 .aim-header h2 {
-    font-size: 1rem;
+    font-size: 1.1rem;
     margin: 0;
 }
 
 .aim-close {
     background: none;
     border: none;
-    font-size: 1.25rem;
+    font-size: 1.4rem;
     line-height: 1;
     color: var(--color-text-muted);
     cursor: pointer;
@@ -1158,6 +1158,7 @@ body.recording-mode #host-view {
 
 .aim-close:hover {
     color: var(--color-text);
+    background: var(--color-bg);
 }
 
 /* --- Body (scrollable) --- */
@@ -1290,21 +1291,6 @@ body.recording-mode #host-view {
     color: var(--color-text-muted);
 }
 
-#aim-talking-points {
-    width: 100%;
-    box-sizing: border-box;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: var(--spacing-sm);
-    font-family: var(--font-sans);
-    font-size: 0.85rem;
-    color: var(--color-text);
-    background-color: var(--color-bg);
-    resize: vertical;
-    line-height: 1.6;
-    min-height: 8em;
-}
-
 /* --- Footer --- */
 .aim-footer {
     display: flex;
@@ -1317,7 +1303,7 @@ body.recording-mode #host-view {
 
 /* Secondary button style for "Add & Next" */
 .aim-btn-secondary {
-    padding: 7px var(--spacing-md);
+    padding: 8px var(--spacing-lg);
     border: 1px solid var(--color-primary);
     border-radius: var(--radius);
     background: transparent;
@@ -1340,7 +1326,7 @@ body.recording-mode #host-view {
 
 /* Primary submit button */
 .aim-btn-primary {
-    padding: 7px var(--spacing-md);
+    padding: 8px var(--spacing-lg);
     border: none;
     border-radius: var(--radius);
     background-color: var(--color-primary);
