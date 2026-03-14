@@ -566,6 +566,7 @@ const articleInputModal = (() => {
         urlInput.autocomplete = 'off';
         const fetchBtn = document.createElement('button');
         fetchBtn.type = 'button';
+        fetchBtn.id = 'aim-fetch';
         fetchBtn.className = 'aim-fetch-btn';
         fetchBtn.textContent = 'Fetch Metadata';
         urlRow.appendChild(urlInput);

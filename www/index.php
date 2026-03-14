@@ -80,7 +80,7 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 
 <footer id="app-footer">
     <button type="button" id="btn-generate">Generate Show Notes</button>
-    <button type="button" id="btn-add-article" class="btn-primary">+ Add Article</button>
+    <button type="button" id="btn-add-article" class="btn-primary" aria-label="Add Article" title="Add Article (Ctrl+Shift+A)">+ Add Article</button>
     <div class="action-bar__right">
         <button type="button" id="btn-new-episode">New Episode</button>
         <button type="button" id="btn-start-recording" class="btn-recording" disabled>Start Recording</button>
