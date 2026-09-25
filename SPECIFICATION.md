@@ -1066,9 +1066,13 @@ The `Scraper` class must prevent requests to private/internal network resources.
 - Integer fields (`week_number`, `year`, `id`) are cast and range-checked
 - Enum fields (`section`) are checked against an allow-list
 
-### 6.6 No Authentication
+### 6.6 API Authentication (optional token gate)
 
-Per requirements, authentication is handled at the network level (homelab LAN). The application itself has no login mechanism. No session tokens, cookies, or CSRF protection are required (the application is not accessible from the public internet and has no state-changing GET requests).
+The application is deployed LAN-only and remains open by default: `config.php` ships with `'api_token' => ''`, and an empty token disables authentication entirely (no session, no cookie, no CSRF state — same footprint as before).
+
+When a non-empty `api_token` is configured, every request to `www/api.php` must present the same token in the `X-API-Token` header; missing or wrong tokens receive `401 Unauthorized` with `WWW-Authenticate: Token`. The comparison hashes both values with SHA-256 and compares them with `hash_equals()`, so no token material ever appears in logs or error responses.
+
+This gate exists so unattended automation (scheduled curation, agent tooling) can be allowed in behind a secret while the human UI stays unchanged on the LAN. It is a per-request shared secret, not a login session.
 
 ### 6.7 HTTP Headers (`www/.htaccess`)
 
