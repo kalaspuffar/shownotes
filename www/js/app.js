@@ -571,24 +571,39 @@ const candidateModule = (() => {
             meta.appendChild(notes);
         }
 
+        // M5 — explicit section choice: two named buttons instead of the
+        // M3 confirm()+prompt() chain (which asked the user to type an
+        // enum and is hostile on touch). The button matching the
+        // candidate's own section carries the automation's suggestion and
+        // is styled solid; the other is the override.
         const actions = document.createElement('div');
         actions.className = 'cp-actions';
+        const name = cand.title || cand.url;
+        const suggested = cand.section === 'vulnerability' ? 'vulnerability' : 'news';
 
-        const selectBtn = document.createElement('button');
-        selectBtn.type = 'button';
-        selectBtn.className = 'cp-btn cp-btn-select';
-        selectBtn.textContent = 'Select';
-        selectBtn.setAttribute('aria-label', `Select ${cand.title || cand.url}`);
-        selectBtn.addEventListener('click', () => handleSelect(cand, selectBtn));
+        for (const section of ['news', 'vulnerability']) {
+            const isSuggested = section === suggested;
+            const selectBtn = document.createElement('button');
+            selectBtn.type = 'button';
+            selectBtn.className = 'cp-btn cp-btn-select' + (isSuggested ? ' cp-btn-select-default' : '');
+            selectBtn.textContent = section === 'news' ? 'News' : 'Vulnerability';
+            selectBtn.setAttribute('aria-label',
+                `Add ${name} to ${section === 'news' ? 'News' : 'Vulnerability'}` +
+                (isSuggested ? ' (suggested section)' : ''));
+            if (isSuggested) {
+                selectBtn.setAttribute('title', 'Suggested by the offer');
+            }
+            selectBtn.addEventListener('click', () =>
+                handleSelect(cand, section, actions.querySelectorAll('button')));
+            actions.appendChild(selectBtn);
+        }
 
         const rejectBtn = document.createElement('button');
         rejectBtn.type = 'button';
         rejectBtn.className = 'cp-btn cp-btn-reject';
         rejectBtn.textContent = 'Reject';
-        rejectBtn.setAttribute('aria-label', `Reject ${cand.title || cand.url}`);
+        rejectBtn.setAttribute('aria-label', `Reject ${name}`);
         rejectBtn.addEventListener('click', () => handleReject(cand, rejectBtn));
-
-        actions.appendChild(selectBtn);
         actions.appendChild(rejectBtn);
 
         row.appendChild(link);
@@ -599,27 +614,11 @@ const candidateModule = (() => {
         return row;
     }
 
-    async function handleSelect(cand, btn) {
-        const defaultSection = cand.section || 'news';
-        const ask = defaultSection === 'news'
-            ? 'Select this candidate? (It goes into News — pick "Vulnerability" to override.)'
-            : 'Select this candidate? (It goes into Vulnerability — pick "News" to override.)';
-
-        let section = defaultSection;
-        if (!window.confirm(ask)) {
-            return;
-        }
-        const override = window.prompt(
-            'Which section? (Enter to keep the default: ' + defaultSection.toUpperCase() + ')',
-            defaultSection
-        );
-        if (override === null) return;
-        const cleaned = override.trim().toLowerCase();
-        if (cleaned === 'vulnerability' || cleaned === 'news') {
-            section = cleaned;
-        }
-
-        btn.disabled = true;
+    // M5 — section is chosen by the clicked button; no dialog chain.
+    // `buttons` is the row's button cluster so every control (including
+    // Reject) locks during the request.
+    async function handleSelect(cand, section, buttons) {
+        buttons.forEach(b => { b.disabled = true; });
         try {
             const data = await apiCall('select_candidate', { url: cand.url, section });
             // Merge the promoted item into state.items so that section renders.
@@ -631,7 +630,7 @@ const candidateModule = (() => {
             render();
             showToast('success', `Selected → ${section === 'news' ? 'News' : 'Vulnerability'}`);
         } catch {
-            btn.disabled = false;
+            buttons.forEach(b => { b.disabled = false; });
         }
     }
 
