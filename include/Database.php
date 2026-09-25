@@ -117,6 +117,37 @@ class Database
         $this->pdo->exec(<<<'SQL'
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items (parent_id, sort_order)
         SQL);
+
+        // M3 — candidate pool: a staging area for automation (cron, agent
+        // tooling) to propose stories without touching the live episode.
+        // Deliberately a separate table from items: thin weeks borrow from the
+        // backlog, and a candidate can sit untouched for several weeks.
+        //
+        // `source` records who pushed the candidate (e.g. the cron job name)
+        // for auditability and the UI provenance badge. `selected_section`
+        // records which section (vulnerability|news) the candidate was
+        // promoted into by select_candidate, so the same candidate URL can be
+        // re-pushed later (e.g. a weekly re-offer) without losing provenance.
+        $this->pdo->exec(<<<'SQL'
+            CREATE TABLE IF NOT EXISTS candidates (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                section        TEXT    NOT NULL DEFAULT 'news' CHECK (section IN ('vulnerability', 'news')),
+                url            TEXT    NOT NULL,
+                title          TEXT    NOT NULL DEFAULT '',
+                author_name    TEXT    NOT NULL DEFAULT '',
+                author_url     TEXT    NOT NULL DEFAULT '',
+                source         TEXT    NOT NULL DEFAULT 'manual',
+                notes          TEXT    NOT NULL DEFAULT '',
+                selected_section TEXT,
+                status         TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'rejected', 'selected')),
+                pushed_at      TEXT    NOT NULL,
+                UNIQUE (url)
+            )
+        SQL);
+
+        $this->pdo->exec(<<<'SQL'
+            CREATE INDEX IF NOT EXISTS idx_candidates_url ON candidates (url)
+        SQL);
     }
 
     private function seedEpisode(): void
@@ -738,6 +769,10 @@ class Database
      * Deletes all items and resets the episode to the current week/year defaults.
      *
      * Author history is intentionally preserved — it accumulates across episodes.
+     *
+     * M3: candidates that were promoted (status 'selected') are flipped back to
+     * 'pending' — their target items were deleted, so the pool re-offers them.
+     * Rejected candidates stay rejected; a re-offer comes from a new push.
      */
     public function resetEpisode(): array
     {
@@ -745,6 +780,9 @@ class Database
 
         try {
             $this->pdo->exec('DELETE FROM items');
+
+            // M3 — return promoted candidates to the pending pool.
+            $this->pdo->exec("UPDATE candidates SET status = 'pending' WHERE status = 'selected'");
 
             $stmt = $this->pdo->prepare(
                 "UPDATE episodes SET week_number = :week, year = :year, youtube_url = '' WHERE id = 1"
@@ -855,5 +893,162 @@ class Database
         $stmt->execute([':domain' => $domain, ':author_name' => $authorName]);
 
         return $stmt->fetchColumn() ?: '';
+    }
+
+    // -------------------------------------------------------------------------
+    // M3 — candidate pool
+    // -------------------------------------------------------------------------
+
+    /**
+     * Upserts a candidate by URL.
+     *
+     * New URL → row inserted with status 'pending'.
+     * Existing URL → metadata (section, title, author, source, notes) refreshed
+     * and the row re-offered ('pending'), so automation can re-push a story
+     * each week without duplicate accumulation. The UNIQUE(url) constraint is
+     * the dedupe mechanism; re-offering replaces the previous offer.
+     *
+     * @return array the candidate row that was inserted or updated
+     */
+    public function upsertCandidate(string $url, string $title, string $authorName, string $authorUrl, string $source, string $notes, string $section): array
+    {
+        $section = in_array($section, ['vulnerability', 'news'], true) ? $section : 'news';
+        $now = date('c');
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO candidates (section, url, title, author_name, author_url, source, notes, status, pushed_at)
+             VALUES (:section, :url, :title, :author_name, :author_url, :source, :notes, \'pending\', :now)
+             ON CONFLICT(url)
+             DO UPDATE SET section = :section,
+                           title = :title,
+                           author_name = :author_name,
+                           author_url = :author_url,
+                           source = :source,
+                           notes = :notes,
+                           status = \'pending\',
+                           selected_section = :selected_section,
+                           pushed_at = :now'
+        );
+        $stmt->execute([
+            ':section'          => $section,
+            ':url'              => $url,
+            ':title'            => $title,
+            ':author_name'      => $authorName,
+            ':author_url'       => $authorUrl,
+            ':source'           => $source,
+            ':notes'            => $notes,
+            ':now'              => $now,
+            ':selected_section' => null,
+        ]);
+
+        return $this->getCandidateByUrl($url);
+    }
+
+    /** Returns all candidate rows for a status ('pending', 'selected', 'rejected'). */
+    public function getCandidates(string $status = 'pending'): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM candidates WHERE status = :status ORDER BY pushed_at ASC, id ASC'
+        );
+        $stmt->execute([':status' => $status]);
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Returns a candidate row by URL, or null if absent.
+     *
+     * @return array|null
+     */
+    public function getCandidateByUrl(string $url): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM candidates WHERE url = :url');
+        $stmt->execute([':url' => $url]);
+
+        $row = $stmt->fetch();
+
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * Promotes a candidate into the episode.
+     *
+     * Adds the item via the existing addItem() path (so sort_order, author
+     * history enrichment, and the section allow-list are all preserved), then
+     * records the promotion on the candidate row.
+     *
+     * Guarded: a candidate that is already selected and promoted into the
+     * target section (item exists) is not duplicated. If the item was later
+     * deleted, the candidate re-offers cleanly.
+     *
+     * @return array{candidate: array, item: array}
+     */
+    public function selectCandidate(string $url, string $targetSection): array
+    {
+        $targetSection = in_array($targetSection, ['vulnerability', 'news'], true) ? $targetSection : 'news';
+
+        $this->pdo->beginTransaction();
+
+        try {
+            $candidate = $this->getCandidateByUrl($url);
+
+            if ($candidate === null) {
+                $this->pdo->rollBack();
+                throw new \RuntimeException("Unknown candidate: $url");
+            }
+
+            // Dedupe: if an item with this URL already exists in the target
+            // section, return the existing row — do not create a second one.
+            $dupeStmt = $this->pdo->prepare(
+                'SELECT * FROM items WHERE section = :section AND url = :url LIMIT 1'
+            );
+            $dupeStmt->execute([':section' => $targetSection, ':url' => $url]);
+            $existing = $dupeStmt->fetch();
+
+            if ($existing === false) {
+                $item = $this->addItem(
+                    $targetSection,
+                    (string) $candidate['url'],
+                    (string) $candidate['title'],
+                    (string) $candidate['author_name'],
+                    (string) $candidate['author_url'],
+                    (string) $candidate['notes']
+                );
+            } else {
+                $item = $existing;
+            }
+
+            $markStmt = $this->pdo->prepare(
+                'UPDATE candidates SET status = \'selected\', selected_section = :ss WHERE url = :url'
+            );
+            $markStmt->execute([':ss' => $targetSection, ':url' => $url]);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return [
+            'candidate' => $this->getCandidateByUrl($url),
+            'item'      => $item,
+        ];
+    }
+
+    /**
+     * Marks a candidate as rejected. Keeps the row (provenance + re-offer)
+     * rather than deleting it, so the audit trail of what automation offered
+     * over time is preserved.
+     */
+    public function rejectCandidate(string $url): ?array
+    {
+        $stmt = $this->pdo->prepare("UPDATE candidates SET status = 'rejected' WHERE url = :url");
+        $stmt->execute([':url' => $url]);
+
+        if ($stmt->rowCount() === 0) {
+            return null;
+        }
+
+        return $this->getCandidateByUrl($url);
     }
 }
