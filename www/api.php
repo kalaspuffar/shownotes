@@ -141,6 +141,8 @@ try {
         'push_candidates'        => handlePushCandidates($body, $db),
         'select_candidate'       => handleSelectCandidate($body, $db),
         'reject_candidate'       => handleRejectCandidate($body, $db),
+        // M4 — research context.
+        'update_item_context'    => handleUpdateItemContext($body, $db),
         default                  => jsonError('Unknown action', 400),
     };
 } catch (\Throwable $e) {

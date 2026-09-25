@@ -303,6 +303,31 @@ function renderItem(item, section) {
         fieldsEl.appendChild(fieldEl);
     }
 
+    // M4 — research context (written by automation; displayed read-only).
+    // status badge + my_context block, both shown when present.
+    const status = (item.status || '').trim();
+    const context = (item.my_context || '').trim();
+    const hasContext = status !== '' || context !== '';
+    if (hasContext) {
+        const ctxEl = document.createElement('div');
+        ctxEl.className = 'item-context';
+        if (status !== '') {
+            const badge = document.createElement('span');
+            badge.className = 'item-context-status';
+            badge.title = 'Workflow status (set by automation)';
+            badge.textContent = status;
+            ctxEl.appendChild(badge);
+        }
+        if (context !== '') {
+            const block = document.createElement('pre');
+            block.className = 'item-context-text';
+            block.textContent = context;
+            block.title = 'Research context (set by automation)';
+            ctxEl.appendChild(block);
+        }
+        fieldsEl.appendChild(ctxEl);
+    }
+
     // Delete button
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';

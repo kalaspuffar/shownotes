@@ -211,6 +211,51 @@ function handleUpdateEpisode(array $body, Database $db): array
     return jsonSuccess(['episode' => $episode]);
 }
 
+/**
+ * POST update_item_context
+ *
+ * M4 — writes the research context onto an existing item. `status` and
+ * `my_context` are both optional per call; the omitted one is left
+ * untouched. Used by automation (research pass) so the host sees the
+ * context in the app (rendered on the item row) and in the generated
+ * Markdown (emitted when non-empty).
+ */
+function handleUpdateItemContext(array $body, Database $db): array
+{
+    $id = filter_var($body['id'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($id === false || $id === null || $id <= 0) {
+        return jsonError('id must be a positive integer');
+    }
+
+    // At least one field must be provided — an empty call tells the caller
+    // what they did wrong instead of silently returning the row.
+    $hasStatus     = array_key_exists('status', $body);
+    $hasMy_context = array_key_exists('my_context', $body);
+
+    if (!$hasStatus && !$hasMy_context) {
+        return jsonError('at least one of "status" or "my_context" must be provided');
+    }
+
+    if ($hasStatus && !is_string($body['status'])) {
+        return jsonError('status must be a string');
+    }
+    if ($hasMy_context && !is_string($body['my_context'])) {
+        return jsonError('my_context must be a string');
+    }
+
+    $status    = $hasStatus ? (string) $body['status'] : null;
+    $myContext = $hasMy_context ? (string) $body['my_context'] : null;
+
+    $item = $db->updateItemContext($id, $status, $myContext);
+
+    if ($item === false) {
+        return jsonError('No item with that id', 404);
+    }
+
+    return jsonSuccess(['item' => $item]);
+}
+
 function handleScrapeUrl(array $body, Scraper $scraper, Database $db): array
 {
     $url = $body['url'] ?? '';

@@ -298,6 +298,13 @@ Lines N+3…: Three-line block per news item:
               By: [{author_name}]({author_url})
               [{url}]({url})
            Followed by blank line between items (NO trailing blank line after last item)
+
+M4 — Optional research context (when item.status or item.my_context is non-empty):
+  News items:     each trimmed line of my_context as a blockquote line,   > {line}
+                   preceded by ONE blank line after the URL line.
+  Vuln items:     same, indented 4 spaces under the bullet,               > {line}
+                   no extra blank line (keeps bullets consecutive).
+  Empty/missing fields emit nothing — pre-M4 output is unchanged.
 ```
 
 **Implementation Notes:**
@@ -679,7 +686,9 @@ CREATE TABLE IF NOT EXISTS items (
     title       TEXT    NOT NULL DEFAULT '',
     author_name TEXT    NOT NULL DEFAULT '',
     author_url  TEXT    NOT NULL DEFAULT '',
-    sort_order  INTEGER NOT NULL DEFAULT 0
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    status      TEXT    NOT NULL DEFAULT '',   -- M4: workflow status (automation)
+    my_context  TEXT    NOT NULL DEFAULT ''    -- M4: research context (automation)
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_section_order
@@ -1202,6 +1211,38 @@ GET /api.php?action=list_candidates
   }
 }
 ```
+
+---
+
+### 5.17 Action: `update_item_context` (write, M4)
+
+**Description:** Sets the research context on an existing item — `status` (short workflow status, e.g. `researched`) and/or `my_context` (free-text research notes). PATCH semantics: omitted fields are left untouched. Written by automation (research pass); displayed read-only in the app and emitted in the generated Markdown when non-empty. A reset (`reset_episode`) deletes items with their context.
+
+**Request:**
+```json
+{
+  "action": "update_item_context",
+  "id": 7,
+  "status": "researched",
+  "my_context": "Backed by the 9to5linux article.\nTwo CVEs fixed in this release."
+}
+```
+
+**Validation:**
+- `id`: integer, must exist in `items` (else `404`)
+- `status`, `my_context`: optional strings — at least one must be present (`400` if neither); non-string values rejected with `400`
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": { "item": { "id": 7, "section": "news", "url": "...", "status": "researched", "my_context": "...", ... } }
+}
+```
+
+**Notes:**
+- `list_items`, `get_episode`, and the page's `INITIAL_STATE` all include `status` + `my_context` (both default to `""`).
+- `my_context` multi-line input is line-split; each trimmed non-empty line becomes one blockquote line in the Markdown (see §3.4 generation rules, M4 note).
 
 ---
 
