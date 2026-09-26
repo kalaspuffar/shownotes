@@ -627,27 +627,26 @@ const candidateModule = (() => {
             author.textContent = cand.author_name;
             meta.appendChild(author);
         }
-        if (meta.childNodes.length) row.appendChild(meta);
-
         // M6 — description: full text colour, its own line (this is the
         // decision-relevant text, it must read well, not be an afterthought).
         const notes = (cand.notes || '').trim();
+        let desc = null;
         if (notes !== '') {
-            const desc = document.createElement('p');
+            desc = document.createElement('p');
             desc.className = 'cp-notes';
             desc.textContent = notes;
-            row.appendChild(desc);
         }
 
         // M6 — corroborating URL list (structured candidates.corroborations):
         // visible, clickable, one line per source, each labelled with its
-        // title when the push knew it.
+        // title when known.
         let corr = (cand.corroborations || []);
         if (typeof corr === 'string') {
             try { corr = JSON.parse(corr) || []; } catch { corr = []; }
         }
+        let ul = null;
         if (Array.isArray(corr) && corr.length > 0) {
-            const ul = document.createElement('ul');
+            ul = document.createElement('ul');
             ul.className = 'cp-corroborations';
             ul.setAttribute('aria-label', 'Corroborating articles');
             for (const c of corr) {
@@ -663,7 +662,7 @@ const candidateModule = (() => {
                 li.appendChild(a);
                 ul.appendChild(li);
             }
-            if (ul.childNodes.length) row.appendChild(ul);
+            if (!ul.childNodes.length) ul = null;
         }
 
         // M5 — explicit section choice: two named buttons instead of the
@@ -701,11 +700,21 @@ const candidateModule = (() => {
         rejectBtn.addEventListener('click', () => handleReject(cand, rejectBtn));
         actions.appendChild(rejectBtn);
 
-        row.appendChild(link);
-        row.appendChild(sourceBadge);
-        if (meta.childNodes.length) row.appendChild(meta);
+        // M6.1 — deterministic left column: title first (this is what you
+        // scan), source + author, then the description (the text you read
+        // to decide), then the corroborating links. All of it lives in one
+        // flex-column container so the DOM order IS the layout — the grid
+        // left column used to auto-place items in append order, which put
+        // the title below the description (M6.1 fix, cnc-interface3.png).
+        const content = document.createElement('div');
+        content.className = 'cp-content';
+        content.appendChild(link);
+        if (sourceBadge.textContent.trim() !== '') content.appendChild(sourceBadge);
+        if (meta.childNodes.length) content.appendChild(meta);
+        if (desc) content.appendChild(desc);
+        if (ul) content.appendChild(ul);
+        row.appendChild(content);
         row.appendChild(actions);
-
         return row;
     }
 
