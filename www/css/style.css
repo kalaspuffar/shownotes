@@ -252,6 +252,57 @@ main {
     flex: 1;
 }
 
+/* URL fields: a link (target article, opens a new tab) + a Copy button
+   (dual-monitor workflow: app stays on this screen, the article opens
+   elsewhere). URL/Author-URL are review targets, not data to type. */
+.item-url {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.item-url-link {
+    color: var(--color-primary);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.item-url-link:hover { text-decoration: underline; }
+.item-url-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+.item-copy-btn {
+    flex-shrink: 0;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-input, #f7f7f5);
+    color: var(--color-text);
+    border-radius: var(--radius);
+    font-size: 0.72rem;
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.item-copy-btn:hover { border-color: var(--color-primary-dark); }
+.item-copy-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
+.item-copy-btn.copied {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.item-copy-btn.failed {
+    background-color: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+}
+
 .item-row:hover .item-field {
     cursor: text;
 }
