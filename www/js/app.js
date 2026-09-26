@@ -13,6 +13,8 @@
 const state = {
     episode: null,
     items:   { vulnerability: [], news: [] },
+    /** M3 — pending candidate pool (automated story offers). */
+    candidates: [],
     config:  null,
 };
 
@@ -473,6 +475,160 @@ function renderSectionList(containerId, items, section) {
         container.appendChild(renderItem(item, section));
     }
 }
+
+/* ----------------------------------------------------------
+   M3 — Candidate pool (candidateModule)
+   Renders the pending pool from state.candidates. Selecting a
+   candidate promotes it into a section (via select_candidate) and
+   re-renders both the pool and the section lists; rejecting via
+   reject_candidate.
+   Hidden when the pool is empty, so the app looks identical to the
+   pre-M3 UI for a manual workflow (nothing pushed).
+   ---------------------------------------------------------- */
+const candidateModule = (() => {
+    'use strict';
+
+    function render() {
+        const section = document.getElementById('candidate-pool');
+        if (!section) return;
+
+        const list = document.getElementById('cp-list');
+        const countEl = document.getElementById('cp-count');
+        if (!list || !countEl) return;
+
+        const candidates = state.candidates || [];
+
+        section.hidden = candidates.length === 0;
+        if (section.hidden) {
+            list.innerHTML = '';
+            countEl.textContent = '';
+            return;
+        }
+
+        countEl.textContent = `(${candidates.length})`;
+        list.innerHTML = '';
+
+        for (const cand of candidates) {
+            list.appendChild(renderCandidateRow(cand));
+        }
+    }
+
+    function renderCandidateRow(cand) {
+        const row = document.createElement('div');
+        row.className = 'cp-row';
+        row.setAttribute('role', 'listitem');
+        row.dataset.url = cand.url;
+
+        const link = document.createElement('a');
+        link.href = cand.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'cp-link';
+        link.textContent = cand.title && cand.title.trim() !== '' ? cand.title : cand.url;
+
+        const sourceBadge = document.createElement('span');
+        sourceBadge.className = 'cp-source';
+        sourceBadge.textContent = cand.source || '';
+        sourceBadge.title = `Offered by ${cand.source || 'manual'}`;
+
+        const meta = document.createElement('div');
+        meta.className = 'cp-meta';
+        if (cand.author_name) {
+            const author = document.createElement('span');
+            author.className = 'cp-author';
+            author.textContent = cand.author_name;
+            meta.appendChild(author);
+        }
+        if (cand.notes && cand.notes.trim() !== '') {
+            const notes = document.createElement('span');
+            notes.className = 'cp-notes';
+            notes.textContent = cand.notes;
+            meta.appendChild(notes);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'cp-actions';
+
+        const selectBtn = document.createElement('button');
+        selectBtn.type = 'button';
+        selectBtn.className = 'cp-btn cp-btn-select';
+        selectBtn.textContent = 'Select';
+        selectBtn.setAttribute('aria-label', `Select ${cand.title || cand.url}`);
+        selectBtn.addEventListener('click', () => handleSelect(cand, selectBtn));
+
+        const rejectBtn = document.createElement('button');
+        rejectBtn.type = 'button';
+        rejectBtn.className = 'cp-btn cp-btn-reject';
+        rejectBtn.textContent = 'Reject';
+        rejectBtn.setAttribute('aria-label', `Reject ${cand.title || cand.url}`);
+        rejectBtn.addEventListener('click', () => handleReject(cand, rejectBtn));
+
+        actions.appendChild(selectBtn);
+        actions.appendChild(rejectBtn);
+
+        row.appendChild(link);
+        row.appendChild(sourceBadge);
+        if (meta.childNodes.length) row.appendChild(meta);
+        row.appendChild(actions);
+
+        return row;
+    }
+
+    async function handleSelect(cand, btn) {
+        const defaultSection = cand.section || 'news';
+        const ask = defaultSection === 'news'
+            ? 'Select this candidate? (It goes into News — pick "Vulnerability" to override.)'
+            : 'Select this candidate? (It goes into Vulnerability — pick "News" to override.)';
+
+        let section = defaultSection;
+        if (!window.confirm(ask)) {
+            return;
+        }
+        const override = window.prompt(
+            'Which section? (Enter to keep the default: ' + defaultSection.toUpperCase() + ')',
+            defaultSection
+        );
+        if (override === null) return;
+        const cleaned = override.trim().toLowerCase();
+        if (cleaned === 'vulnerability' || cleaned === 'news') {
+            section = cleaned;
+        }
+
+        btn.disabled = true;
+        try {
+            const data = await apiCall('select_candidate', { url: cand.url, section });
+            // Merge the promoted item into state.items so that section renders.
+            state.items[section].push(data.item);
+            removeCandidateFromState(cand.url);
+            // Re-render the affected section list plus the pool itself.
+            if (section === 'vulnerability') renderVulnerabilityList();
+            else renderNewsList();
+            render();
+            showToast('success', `Selected → ${section === 'news' ? 'News' : 'Vulnerability'}`);
+        } catch {
+            btn.disabled = false;
+        }
+    }
+
+    async function handleReject(cand, btn) {
+        if (!window.confirm(`Reject "${cand.title || cand.url}"?`)) return;
+        btn.disabled = true;
+        try {
+            await apiCall('reject_candidate', { url: cand.url });
+            removeCandidateFromState(cand.url);
+            render();
+            showToast('success', 'Rejected.');
+        } catch {
+            btn.disabled = false;
+        }
+    }
+
+    function removeCandidateFromState(url) {
+        state.candidates = (state.candidates || []).filter(c => c.url !== url);
+    }
+
+    return { render, removeCandidateFromState };
+})();
 
 /* ----------------------------------------------------------
    10.10 — Delete item with confirmation
@@ -1786,12 +1942,14 @@ function bindNewEpisodeButton() {
         try {
             const data = await apiCall('reset_episode');
 
-            state.episode = data.episode;
-            state.items   = data.items;
+            state.episode    = data.episode;
+            state.items      = data.items;
+            state.candidates = data.candidates || [];
 
             renderEpisodeMeta();
             renderVulnerabilityList();
             renderNewsList();
+            candidateModule.render();
             updateStartRecordingButton();
         } catch {
             // Error toast already shown by apiCall
@@ -2461,14 +2619,16 @@ function handleGlobalPaste(e) {
    ---------------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', () => {
     // Clone INITIAL_STATE into module-scope state
-    state.episode = structuredClone(INITIAL_STATE.episode);
-    state.items   = structuredClone(INITIAL_STATE.items);
-    state.config  = structuredClone(INITIAL_STATE.config);
+    state.episode    = structuredClone(INITIAL_STATE.episode);
+    state.items      = structuredClone(INITIAL_STATE.items);
+    state.candidates = structuredClone(INITIAL_STATE.candidates || []);
+    state.config     = structuredClone(INITIAL_STATE.config);
 
     // Initial render
     renderEpisodeMeta();
     renderVulnerabilityList();
     renderNewsList();
+    candidateModule.render();
 
     // Bind interactive behaviours
     bindEpisodeMetaListeners();

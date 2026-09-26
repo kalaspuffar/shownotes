@@ -8,9 +8,10 @@ $config = require __DIR__ . '/../etc/config.php';
 $db     = Database::getInstance();
 
 $state = [
-    'episode' => $db->getEpisode(),
-    'items'   => $db->getItems(),
-    'config'  => [
+    'episode'    => $db->getEpisode(),
+    'items'      => $db->getItems(),
+    'candidates' => $db->getCandidates('pending'),
+    'config'     => [
         'show_title'  => $config['show_title'],
         'show_tagline' => $config['show_tagline'],
         'sections'    => $config['sections'],
@@ -60,6 +61,15 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 <main>
 <div class="prep-ui">
 <div id="content-area">
+
+    <!-- M3 — Candidate pool: automation (cron/agent) offers stories here before
+         they enter the live episode. Selecting promotes to a section; rejecting
+         dismisses for now. Hidden client-side when the pool is empty. -->
+    <section id="candidate-pool" aria-label="Story candidates" hidden>
+        <h2>Candidates <span class="cp-count" id="cp-count" aria-live="polite"></span></h2>
+        <div id="cp-list" role="list"></div>
+    </section>
+
     <div id="item-lists">
         <section id="vulnerability-list" aria-label="<?= $vulnLabel ?>">
             <h2><?= $vulnLabel ?></h2>

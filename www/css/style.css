@@ -1495,3 +1495,130 @@ body.recording-mode #host-view {
     background-color: var(--color-primary-dark);
 }
 
+/* ============================================================
+   M3 — Candidate pool (suggested stories from automation)
+   ============================================================ */
+#candidate-pool {
+    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-md);
+    border: 1px dashed var(--color-primary);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+
+#candidate-pool h2 {
+    margin: 0 0 var(--spacing-sm);
+    font-size: 1.05rem;
+}
+
+.cp-count {
+    color: var(--color-text-muted);
+    font-weight: normal;
+}
+
+#cp-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.cp-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+}
+
+.cp-link {
+    color: var(--color-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cp-link:hover {
+    color: var(--color-primary-dark);
+}
+
+.cp-source {
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
+    color: var(--color-primary-dark);
+    white-space: nowrap;
+}
+
+.cp-meta {
+    grid-column: 1 / 2;
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.cp-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.cp-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 0.85rem;
+    cursor: pointer;
+    min-height: 36px;
+}
+
+.cp-btn:hover {
+    border-color: var(--color-primary);
+}
+
+.cp-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.cp-btn-select {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.cp-btn-select:hover {
+    background: var(--color-primary-dark);
+}
+
+.cp-btn-reject:hover {
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+}
+
+@media (max-width: 640px) {
+    .cp-row {
+        grid-template-columns: 1fr;
+    }
+    .cp-meta,
+    .cp-source {
+        grid-column: 1;
+    }
+    .cp-actions {
+        grid-column: 1;
+        grid-row: auto;
+        justify-self: end;
+    }
+}
+

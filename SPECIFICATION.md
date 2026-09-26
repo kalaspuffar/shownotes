@@ -1080,6 +1080,131 @@ GET /api.php?action=list_items&section=news
 
 ---
 
+### 5.12 Action: `push_candidates` (write)
+
+**Description:** Automation's entry point. Pushes a batch of candidate stories into the pool in one call. Each entry must carry a valid URL; all other fields are optional. Re-pushing an existing URL refreshes its metadata, re-offers it (`status → pending`), so a weekly cron can re-offer the same story without duplicate accumulation. `UNIQUE(url)` is the dedupe mechanism.
+
+**Request:**
+```json
+{
+  "action": "push_candidates",
+  "source": "cron",
+  "candidates": [
+    { "url": "https://example.com/story", "title": "Story Title", "section": "news", "author_name": "Author", "author_url": "https://example.com/author", "notes": "optional context" }
+  ]
+}
+```
+
+**Validation:**
+- `candidates`: non-empty array of objects; a non-array entry is skipped and reported in `errors`
+- `url`: absolute http(s) URL — required per entry; invalid entries are skipped and listed in `errors` while the valid ones still land (partial success)
+- `section` per entry: `"vulnerability"` or `"news"` (default `"news"`)
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "count": 2,
+    "candidates": [ { "id": 1, "url": "https://...", ... } ],
+    "errors": [ "candidates[2].url: must be an absolute http(s) URL" ]
+  }
+}
+```
+
+`errors` is only present when at least one entry was rejected.
+
+---
+
+### 5.13 Action: `list_candidates` (read)
+
+**Description:** Returns the pending candidate pool, oldest push first. Read-only, side-effect free, served over `GET` so automation and the UI can poll it.
+
+**Request:**
+```
+GET /api.php?action=list_candidates
+```
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "candidates": [ { "id": 1, "section": "news", "url": "https://...", "title": "...", "source": "cron", "status": "pending", "pushed_at": "2026-09-25T15:52:02+00:00" } ]
+  }
+}
+```
+
+**Method rules:** `405` if sent as POST, `400` if the action is unknown.
+
+---
+
+### 5.14 Action: `select_candidate` (write)
+
+**Description:** Promotes one candidate into the episode. Reuses `Database::addItem()`, so the promoted item is identical to one added from the UI. `section` is optional — it defaults to the candidate's own section. Duplicate-safe: if an item with this URL already exists in the target section, the existing row is returned and no second one is created.
+
+**Request:**
+```json
+{ "action": "select_candidate", "url": "https://example.com/story", "section": "news" }
+```
+
+**Validation:**
+- `url`: required — must be a known candidate, else `404`
+- `section`: optional, `"vulnerability"` or `"news"`; an unknown value returns `400`
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "candidate": { "id": 1, "url": "https://...", "status": "selected", "selected_section": "news", ... },
+    "item": { "id": 7, "section": "news", "url": "https://...", ... }
+  }
+}
+```
+
+---
+
+### 5.15 Action: `reject_candidate` (write)
+
+**Description:** Marks a candidate rejected. The row is kept (not deleted) for provenance, so a later push of the same URL re-offers it and the audit trail of what automation suggested over time is preserved.
+
+**Request:**
+```json
+{ "action": "reject_candidate", "url": "https://example.com/story" }
+```
+
+**Validation:**
+- `url`: required — must be a known candidate, else `404`
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": { "candidate": { "id": 1, "url": "https://...", "status": "rejected", ... } }
+}
+```
+
+---
+
+### 5.16 Action: `reset_episode` (write)
+
+**Description:** (Existing) Deletes all items and resets the episode metadata. M3: candidates in status `selected` are flipped back to `pending` (re-offered) — their target items were deleted. Rejected candidates stay rejected. The response now also carries the current `candidates` list so the UI can re-render the pool.
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "episode": { "id": 1, "week_number": 39, "year": 2026, "youtube_url": "" },
+    "items": { "vulnerability": [], "news": [] },
+    "candidates": [ { "id": 1, "url": "https://...", "status": "pending", ... } ]
+  }
+}
+```
+
+---
+
 ## 6. Security Architecture
 
 ### 6.1 SSRF Protection

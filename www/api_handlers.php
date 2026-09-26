@@ -57,6 +57,139 @@ function handleListItems(Database $db): array
     return jsonSuccess(['items' => $db->getItems()]);
 }
 
+/**
+ * POST push_candidates
+ *
+ * Automation's entry point. Pushes a batch of candidates into the pool in
+ * one call. Each entry must carry a valid URL (http/https); everything else
+ * is optional and defaults to empty. Re-pushing an existing URL refreshes
+ * its metadata and re-offers it (status → 'pending'), so a weekly cron can
+ * re-offer the same story without piling up duplicates.
+ *
+ * Batch semantics: entries are upserted one by one; a single invalid entry
+ * does not abort the batch, it is reported in `errors` while the valid
+ * ones still land. (The batch is per-entry, not transactional — partial
+ * success with a precise error list is more useful to automation than an
+ * all-or-nothing failure.)
+ */
+function handlePushCandidates(array $body, Database $db): array
+{
+    $rawCandidates = $body['candidates'] ?? [];
+    $source        = is_string($body['source'] ?? null) ? mb_substr(trim($body['source']), 0, 64) : 'manual';
+
+    if (!is_array($rawCandidates) || $rawCandidates === []) {
+        return jsonError('candidates must be a non-empty array of {url, ...} entries');
+    }
+
+    $pushed = [];
+    $errors = [];
+
+    foreach ($rawCandidates as $i => $raw) {
+        if (!is_array($raw)) {
+            $errors[] = "candidates[$i]: must be an object";
+            continue;
+        }
+
+        $url = (string) ($raw['url'] ?? '');
+        $host = parse_url($url, PHP_URL_HOST);
+        $scheme = strtolower((string) (parse_url($url, PHP_URL_SCHEME) ?? ''));
+
+        if ($url === '' || $host === null || !in_array($scheme, ['http', 'https'], true)) {
+            $errors[] = "candidates[$i].url: must be an absolute http(s) URL";
+            continue;
+        }
+
+        $section    = (string) ($raw['section'] ?? 'news');
+        $title      = (string) ($raw['title'] ?? '');
+        $authorName = (string) ($raw['author_name'] ?? '');
+        $authorUrl  = (string) ($raw['author_url'] ?? '');
+        $notes      = (string) ($raw['notes'] ?? '');
+
+        $row = $db->upsertCandidate($url, $title, $authorName, $authorUrl, $source, $notes, $section);
+
+        // upsertCandidate returns null only if the row vanished after insert
+        // (not possible in this process); keep the call site honest either way.
+        if ($row !== null) {
+            $pushed[] = $row;
+        }
+    }
+
+    $data = ['count' => count($pushed), 'candidates' => $pushed];
+
+    if ($errors !== []) {
+        // Partial success: valid entries landed, invalid ones are listed.
+        $data['errors'] = $errors;
+    }
+
+    return jsonSuccess($data);
+}
+
+/**
+ * POST select_candidate
+ *
+ * Promotes one candidate into the episode. `url` is required; `section`
+ * is optional and defaults to the candidate's own section (falls back to
+ * 'news'). The promotion reuses Database::addItem(), so the new item is
+ * identical to one added from the UI.
+ */
+function handleSelectCandidate(array $body, Database $db): array
+{
+    $url = (string) ($body['url'] ?? '');
+
+    if ($url === '') {
+        return jsonError('url is required');
+    }
+
+    $candidate = $db->getCandidateByUrl($url);
+
+    if ($candidate === null) {
+        return jsonError('No candidate with that url', 404);
+    }
+
+    $rawSection = (string) ($body['section'] ?? $candidate['section']);
+    if (!in_array($rawSection, ['vulnerability', 'news'], true)) {
+        return jsonError('section must be "vulnerability" or "news"');
+    }
+
+    $result = $db->selectCandidate($url, $rawSection);
+
+    return jsonSuccess(['candidate' => $result['candidate'], 'item' => $result['item']]);
+}
+
+/**
+ * POST reject_candidate
+ *
+ * Marks a candidate rejected. The row is kept (not deleted) for provenance;
+ * a later push of the same URL re-offers it.
+ */
+function handleRejectCandidate(array $body, Database $db): array
+{
+    $url = (string) ($body['url'] ?? '');
+
+    if ($url === '') {
+        return jsonError('url is required');
+    }
+
+    $candidate = $db->rejectCandidate($url);
+
+    if ($candidate === null) {
+        return jsonError('No candidate with that url', 404);
+    }
+
+    return jsonSuccess(['candidate' => $candidate]);
+}
+
+/**
+ * GET list_candidates
+ *
+ * Returns the pending candidate pool, oldest push first (the order automation
+ * will select from). Reads only — safe to poll.
+ */
+function handleListCandidates(Database $db): array
+{
+    return jsonSuccess(['candidates' => $db->getCandidates('pending')]);
+}
+
 function handleUpdateEpisode(array $body, Database $db): array
 {
     $week       = filter_var($body['week_number'] ?? null, FILTER_VALIDATE_INT);
@@ -256,10 +389,13 @@ function handleReorderItems(array $body, Database $db): array
 
 function handleResetEpisode(Database $db): array
 {
-    $episode = $db->resetEpisode();
-    $items   = $db->getItems();
+    $episode    = $db->resetEpisode();
+    $items      = $db->getItems();
+    $candidates = $db->getCandidates('pending');
 
-    return jsonSuccess(['episode' => $episode, 'items' => $items]);
+    // M3: reset returns promoted candidates to the pool — the UI re-renders
+    // the pool from this response so re-offered stories reappear.
+    return jsonSuccess(['episode' => $episode, 'items' => $items, 'candidates' => $candidates]);
 }
 
 function handleGetAuthorSuggestions(array $body, Database $db): array
