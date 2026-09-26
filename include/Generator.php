@@ -91,7 +91,15 @@ class MarkdownGenerator
             if ($isSecondary) {
                 // Corroborating sub-article: one indented line, attribution
                 // included so no reporter goes uncredited in the notes.
-                $line = "Also: [{$item['title']}]({$item['url']})";
+                // Some sites (JS-heavy front pages, paywalled pages) resist
+                // title scraping — never emit an empty [ ]() link; the
+                // domain then stands in as the link text.
+                $linkTitle = trim((string) $item['title']);
+                if ($linkTitle === '') {
+                    $parts = parse_url((string) $item['url']);
+                    $linkTitle = isset($parts['host']) ? $parts['host'] : (string) $item['url'];
+                }
+                $line = "Also: [{$linkTitle}]({$item['url']})";
                 if ($author !== '') {
                     $by = $profile !== '' ? "[{$author}]({$profile})" : $author;
                     $line .= " — By: {$by}";
