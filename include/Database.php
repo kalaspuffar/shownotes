@@ -167,6 +167,17 @@ class Database
 
     private function seedEpisode(): void
     {
+        // M6 migration — pre-M6 candidate pools lack the new columns
+        // (CREATE TABLE IF NOT EXISTS does not add columns to existing tables).
+        // Note: FETCH_COLUMN index 1 = the column NAME (column 0 is cid).
+        $cols = $this->pdo->query('PRAGMA table_info(candidates)')->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('corroborations', $cols, true)) {
+            $this->pdo->exec("ALTER TABLE candidates ADD COLUMN corroborations TEXT NOT NULL DEFAULT ''");
+        }
+        if (!in_array('selected_item_id', $cols, true)) {
+            $this->pdo->exec("ALTER TABLE candidates ADD COLUMN selected_item_id INTEGER");
+        }
+
         // INSERT OR IGNORE is a no-op when the row already exists.
         $stmt = $this->pdo->prepare(
             'INSERT OR IGNORE INTO episodes (id, week_number, year, youtube_url)
@@ -983,14 +994,17 @@ class Database
      *
      * @return array the candidate row that was inserted or updated
      */
-    public function upsertCandidate(string $url, string $title, string $authorName, string $authorUrl, string $source, string $notes, string $section): array
+    public function upsertCandidate(string $url, string $title, string $authorName, string $authorUrl, string $source, string $notes, string $section = 'news', ?array $corroborations = null): array
     {
         $section = in_array($section, ['vulnerability', 'news'], true) ? $section : 'news';
-        $now = date('c');
+        $now     = date('c');
+        $corrJson = (is_array($corroborations) && $corroborations !== [])
+            ? (json_encode($corroborations, JSON_UNESCAPED_SLASHES) ?: '')
+            : '';
 
         $stmt = $this->pdo->prepare(
-            'INSERT INTO candidates (section, url, title, author_name, author_url, source, notes, status, pushed_at)
-             VALUES (:section, :url, :title, :author_name, :author_url, :source, :notes, \'pending\', :now)
+            'INSERT INTO candidates (section, url, title, author_name, author_url, source, notes, corroborations, status, pushed_at)
+             VALUES (:section, :url, :title, :author_name, :author_url, :source, :notes, :corr, \'pending\', :now)
              ON CONFLICT(url)
              DO UPDATE SET section = :section,
                            title = :title,
@@ -998,8 +1012,7 @@ class Database
                            author_url = :author_url,
                            source = :source,
                            notes = :notes,
-                           status = \'pending\',
-                           selected_section = :selected_section,
+                           corroborations = :corr,
                            pushed_at = :now'
         );
         $stmt->execute([
@@ -1010,8 +1023,8 @@ class Database
             ':author_url'       => $authorUrl,
             ':source'           => $source,
             ':notes'            => $notes,
+            ':corr'             => $corrJson,
             ':now'              => $now,
-            ':selected_section' => null,
         ]);
 
         return $this->getCandidateByUrl($url);
@@ -1056,7 +1069,7 @@ class Database
      *
      * @return array{candidate: array, item: array}
      */
-    public function selectCandidate(string $url, string $targetSection): array
+    public function selectCandidate(string $url, string $targetSection, string $title = '', string $authorName = '', string $authorUrl = ''): array
     {
         $targetSection = in_array($targetSection, ['vulnerability', 'news'], true) ? $targetSection : 'news';
 
@@ -1070,8 +1083,16 @@ class Database
                 throw new \RuntimeException("Unknown candidate: $url");
             }
 
+            // M6 — the caller passes resolved attribution (candidate row
+            // values overlaid with any scraped enrichment). Fall back to the
+            // stored row values so a caller that omits them still works.
+            $finalTitle   = $title       !== '' ? $title       : (string) $candidate['title'];
+            $finalAuthor  = $authorName  !== '' ? $authorName  : (string) $candidate['author_name'];
+            $finalProfile = $authorUrl   !== '' ? $authorUrl   : (string) $candidate['author_url'];
+
             // Dedupe: if an item with this URL already exists in the target
-            // section, return the existing row — do not create a second one.
+            // section, return the existing row — do not create a second one —
+            // but refresh its attribution with the (possibly enriched) values.
             $dupeStmt = $this->pdo->prepare(
                 'SELECT * FROM items WHERE section = :section AND url = :url LIMIT 1'
             );
@@ -1082,19 +1103,40 @@ class Database
                 $item = $this->addItem(
                     $targetSection,
                     (string) $candidate['url'],
-                    (string) $candidate['title'],
-                    (string) $candidate['author_name'],
-                    (string) $candidate['author_url'],
+                    $finalTitle,
+                    $finalAuthor,
+                    $finalProfile,
                     (string) $candidate['notes']
                 );
             } else {
-                $item = $existing;
+                $this->updateItem(
+                    (int) $existing['id'],
+                    (string) $existing['url'],
+                    $finalTitle,
+                    $finalAuthor,
+                    $finalProfile
+                );
+                $item = $this->getItemById((int) $existing['id']);
             }
 
+            // Record the promotion and cache the item id so unselectCandidate
+            // can find the row even after re-nesting/re-ordering.
             $markStmt = $this->pdo->prepare(
-                'UPDATE candidates SET status = \'selected\', selected_section = :ss WHERE url = :url'
+                "UPDATE candidates
+                     SET status = 'selected',
+                         selected_section = :ss,
+                         selected_item_id = :itemid,
+                         author_name = :an,
+                         author_url  = :au
+                   WHERE url = :url"
             );
-            $markStmt->execute([':ss' => $targetSection, ':url' => $url]);
+            $markStmt->execute([
+                ':ss'       => $targetSection,
+                ':itemid'   => (int) $item['id'],
+                ':an'       => $finalAuthor,
+                ':au'       => $finalProfile,
+                ':url'      => $url,
+            ]);
 
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -1106,6 +1148,103 @@ class Database
             'candidate' => $this->getCandidateByUrl($url),
             'item'      => $item,
         ];
+    }
+
+    /** Reverses a selection: removes the promoted item and its corroborating
+     *  secondaries, then re-offers the candidate ('pending').
+     *
+     *  Order matters: secondaries are removed FIRST. deleteItem() treats a
+     *  primary that still has children as "demote the first secondary to
+     *  primary" — deleting the group would resurrect the corroborator as a
+     *  standalone story. With the secondaries gone, the primary deletes
+     *  cleanly. No nested transaction: deleteItem() opens its own.
+     */
+    public function unselectCandidate(string $url): array|false
+    {
+        $candidate = $this->getCandidateByUrl($url);
+
+        if ($candidate === null || $candidate['status'] !== 'selected') {
+            return false;
+        }
+
+        if ($candidate['selected_item_id'] !== null) {
+            $itemId = (int) $candidate['selected_item_id'];
+
+            // Remove corroborating secondaries first (see the note above).
+            $childStmt = $this->pdo->prepare(
+                'DELETE FROM items WHERE parent_id = :pid'
+            );
+            $childStmt->execute([':pid' => $itemId]);
+
+            $this->deleteItem($itemId);
+        }
+
+        $stmt = $this->pdo->prepare(
+            "UPDATE candidates
+                 SET status = 'pending', selected_section = NULL, selected_item_id = NULL
+               WHERE url = :url"
+        );
+        $stmt->execute([':url' => $url]);
+
+        return $this->getCandidateByUrl($url);
+    }
+
+    /** True when any item row already carries this URL. */
+    public function itemUrlExists(string $url): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM items WHERE url = :url LIMIT 1');
+        $stmt->execute([':url' => $url]);
+
+        return $stmt->fetch() !== false;
+    }
+
+    /**
+     * Adds a secondary (corroborating) item directly under a news primary.
+     * Equivalent to the nest flow minus the transfer dance: section 'news',
+     * parent_id = the primary item, first free slot in the group's order.
+     */
+    public function addSecondary(int $parentId, string $url, string $title, string $authorName, string $authorUrl): array
+    {
+        $parentStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+        $parentStmt->execute([':id' => $parentId]);
+        $parent = $parentStmt->fetch();
+
+        if ($parent === false) {
+            throw new \InvalidArgumentException('Parent item not found');
+        }
+
+        // First free sort_order inside the group (secondaries share the
+        // primary's id space per the existing query convention).
+        $posStmt = $this->pdo->prepare(
+            'SELECT COALESCE(MAX(sort_order), 0) + 1 FROM items WHERE parent_id = :pid'
+        );
+        $posStmt->execute([':pid' => $parentId]);
+        $sortOrder = (int) $posStmt->fetch();
+
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO items (section, url, title, author_name, author_url, sort_order, parent_id)
+             VALUES ('news', :url, :title, :author_name, :author_url, :sort_order, :parent_id)"
+        );
+        $stmt->execute([
+            ':url'          => $url,
+            ':title'        => $title,
+            ':author_name'  => $authorName,
+            ':author_url'   => $authorUrl,
+            ':sort_order'   => $sortOrder,
+            ':parent_id'    => $parentId,
+        ]);
+
+        return $this->getItemById((int) $this->pdo->lastInsertId());
+    }
+
+    /** Returns one item row by id (for handler responses). */
+    public function getItemById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+        $stmt->execute([':id' => $id]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : $row;
     }
 
     /**

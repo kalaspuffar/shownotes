@@ -293,11 +293,14 @@ Lines 7…: - [{title}]({url})   ← one per vulnerability item, NO blank lines 
 Line N:   (blank after last vulnerability item)
 Line N+1: ### {sections['news']}
 Line N+2: (blank)
-Lines N+3…: Three-line block per news item:
+Lines N+3…: Three-line block per news ITEM (primary story):
               Title: {title}
-              By: [{author_name}]({author_url})
+              By: [{author_name}]({author_url})   ← only when an author name exists
               [{url}]({url})
-           Followed by blank line between items (NO trailing blank line after last item)
+           Corroborating sub-articles (secondaries under a primary), M6:
+              Also: [{title}]({url}) — By: [{author_name}]({author_url})   ← 4-space indent,
+              one per corroborator, in stored order; " — By: …" only when it has an author
+           Followed by blank line between story blocks (NO trailing blank line after last block)
 
 M4 — Optional research context (when item.status or item.my_context is non-empty):
   News items:     each trimmed line of my_context as a blockquote line,   > {line}
@@ -305,6 +308,14 @@ M4 — Optional research context (when item.status or item.my_context is non-emp
   Vuln items:     same, indented 4 spaces under the bullet,               > {line}
                    no extra blank line (keeps bullets consecutive).
   Empty/missing fields emit nothing — pre-M4 output is unchanged.
+
+M6 — attribution rules:
+  - "By:" is NEVER emitted with an empty author (no bare [ ]() links);
+  - the vulnerability bullet format gains the same conditional "By:" line
+    (indented 4 spaces) when vulnerability items carry an author, so a
+    credited report reads the same in both sections;
+  - secondaries attach to the story block above them (no blank line
+    between a primary and its own secondaries).
 ```
 
 **Implementation Notes:**
@@ -688,7 +699,10 @@ CREATE TABLE IF NOT EXISTS items (
     author_url  TEXT    NOT NULL DEFAULT '',
     sort_order  INTEGER NOT NULL DEFAULT 0,
     status      TEXT    NOT NULL DEFAULT '',   -- M4: workflow status (automation)
-    my_context  TEXT    NOT NULL DEFAULT ''    -- M4: research context (automation)
+    my_context  TEXT    NOT NULL DEFAULT '',   -- M4: research context (automation)
+    parent_id   INTEGER                          -- NULL = top-level; else the
+                                                -- id of the primary it is a
+                                                -- corroborating secondary of
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_section_order
@@ -707,6 +721,29 @@ CREATE TABLE IF NOT EXISTS author_history (
 
 CREATE INDEX IF NOT EXISTS idx_author_history_domain
     ON author_history (domain, use_count DESC, last_used_at DESC);
+
+-- Candidate pool (M3) — automated story offers awaiting a decision
+CREATE TABLE IF NOT EXISTS candidates (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    section          TEXT NOT NULL DEFAULT 'news'
+                     CHECK (section IN ('vulnerability', 'news')),
+    url              TEXT NOT NULL,
+    title            TEXT NOT NULL DEFAULT '',
+    author_name      TEXT NOT NULL DEFAULT '',
+    author_url       TEXT NOT NULL DEFAULT '',
+    source           TEXT NOT NULL DEFAULT 'manual',
+    notes            TEXT NOT NULL DEFAULT '',   -- clean description shown in the pool
+    corroborations   TEXT NOT NULL DEFAULT '',   -- M6: JSON array of corroborating
+                                                 -- article {url,title,author_name,author_url}
+    selected_section TEXT,
+    selected_item_id INTEGER,                   -- M6: the item id at promotion,
+                                                -- lets unselect_candidate find it
+    status           TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'rejected', 'selected')),
+    pushed_at        TEXT NOT NULL,
+    UNIQUE (url)
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_url ON candidates (url);
 ```
 
 **Notes:**
@@ -1099,7 +1136,8 @@ GET /api.php?action=list_items&section=news
   "action": "push_candidates",
   "source": "cron",
   "candidates": [
-    { "url": "https://example.com/story", "title": "Story Title", "section": "news", "author_name": "Author", "author_url": "https://example.com/author", "notes": "optional context" }
+    { "url": "https://example.com/story", "title": "Story Title", "section": "news", "author_name": "Author", "author_url": "https://example.com/author", "notes": "optional context",
+      "corroborations": [ { "url": "https://example.com/second-source", "title": "", "author_name": "", "author_url": "" } ] }
   ]
 }
 ```
@@ -1108,6 +1146,7 @@ GET /api.php?action=list_items&section=news
 - `candidates`: non-empty array of objects; a non-array entry is skipped and reported in `errors`
 - `url`: absolute http(s) URL — required per entry; invalid entries are skipped and listed in `errors` while the valid ones still land (partial success)
 - `section` per entry: `"vulnerability"` or `"news"` (default `"news"`)
+- (M6) `corroborations`: optional array of corroborating article records, each `{url, title, author_name, author_url}`. Only entries whose `url` is an absolute http(s) URL are stored; the rest are silently dropped. Stored as a JSON string column on the candidate row (empty string when absent); reads (`list_candidates` etc.) return it as stored, and the UI parses it.
 
 **Response (success):**
 ```json
@@ -1163,6 +1202,13 @@ GET /api.php?action=list_candidates
 
 **UI presentation (M5):** The candidate row offers three explicit buttons — **News**, **Vulnerability**, **Reject**. The button matching the candidate's own `section` is styled as the default (solid); the other section button is the override (outlined). There is no `confirm()`/`prompt()` dialog in this flow: the clicked button *is* the decision, and any of the three disables the whole control cluster while the request is in flight (re-enabled on failure). Rejecting still asks for a single `confirm()` because it discards the offer.
 
+**M6 — attribution and corroborating articles:**
+- The `notes` field is the *clean description* shown on the candidate row (full text colour); corroborating URLs are no longer glued into `notes` — automation sends them via the `corroborations` field (§5.12) and the app renders them as a visible, clickable list.
+- **Enrichment (best-effort, never fails selection):** if the candidate's title, author name, or author URL is missing, the app's Scraper fills what it finds before the item is written (author-history lookup reused for profile URLs). Any fetch failure degrades to empty fields.
+- **Sub-articles:** for a promotion into `news`, each stored corroborating URL that is not yet in the episode becomes a secondary under the promoted item (dedupe by URL; self-reference skipped; one bad record is skipped, never fatal). Selection into `vulnerability` does not create secondaries (that section has no story groups).
+- The response additionally carries `group`: `[primary, secondary...]` for the UI to splice into state in one render.
+- Re-selection of the same URL (dedupe path) refreshes the item's attribution and returns the current group.
+
 **Response (success):**
 ```json
 {
@@ -1198,7 +1244,37 @@ GET /api.php?action=list_candidates
 
 ---
 
-### 5.16 Action: `reset_episode` (write)
+### 5.16 Action: `unselect_candidate` (write, M6)
+
+**Description:** Reverses a misclicked candidate selection ("return to pool" — **not** the same as reject). The promoted item and its corroborating secondaries are removed from the episode; the candidate row goes back to `status: pending` (re-offered), `selected_section`/`selected_item_id` are cleared. Reject, by contrast, marks the row `rejected` (kept out of the pool).
+
+**Request:**
+```json
+{ "action": "unselect_candidate", "url": "https://example.com/story" }
+```
+
+**Validation:**
+- `url`: required — must be a known candidate, else `404`
+- the candidate must be in status `selected`, else `400`
+
+**Note:** secondaries are deleted before the primary so `delete_item`'s primary-demotion logic cannot resurrect a corroborator as a standalone story.
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "candidate": { "id": 1, "url": "https://...", "status": "pending", ... },
+    "episode":   { ... },
+    "items":     { "vulnerability": [ ... ], "news": [ ... ] },
+    "candidates": [ ... pending pool ... ]
+  }
+}
+```
+
+---
+
+### 5.17 Action: `reset_episode` (write)
 
 **Description:** (Existing) Deletes all items and resets the episode metadata. M3: candidates in status `selected` are flipped back to `pending` (re-offered) — their target items were deleted. Rejected candidates stay rejected. The response now also carries the current `candidates` list so the UI can re-render the pool.
 
@@ -1216,7 +1292,7 @@ GET /api.php?action=list_candidates
 
 ---
 
-### 5.17 Action: `update_item_context` (write, M4)
+### 5.18 Action: `update_item_context` (write, M4)
 
 **Description:** Sets the research context on an existing item — `status` (short workflow status, e.g. `researched`) and/or `my_context` (free-text research notes). PATCH semantics: omitted fields are left untouched. Written by automation (research pass); displayed read-only in the app and emitted in the generated Markdown when non-empty. A reset (`reset_episode`) deletes items with their context.
 

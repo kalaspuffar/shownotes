@@ -11,6 +11,8 @@ $state = [
     'episode'    => $db->getEpisode(),
     'items'      => $db->getItems(),
     'candidates' => $db->getCandidates('pending'),
+    // M6 — selected candidates, so item rows can offer "Return to pool".
+    'selectedCandidates' => $db->getCandidates('selected'),
     'config'     => [
         'show_title'  => $config['show_title'],
         'show_tagline' => $config['show_tagline'],

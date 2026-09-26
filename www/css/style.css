@@ -278,6 +278,38 @@ main {
     opacity: 1;
 }
 
+/* M6 — "return to pool" cluster: inverse of a candidate selection. */
+.item-actions {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: row;
+    gap: 2px;
+    align-self: flex-start;
+}
+
+.item-actions .item-delete {
+    /* inside the cluster the delete is always visible (it belongs to the
+       action set, not a hover easter egg) */
+    opacity: 1;
+}
+
+.item-back-to-pool {
+    background: none;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 0.78rem;
+    padding: 1px 8px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+}
+
+.item-actions:hover .item-back-to-pool,
+.item-back-to-pool:focus-visible {
+    border-color: var(--color-primary);
+    color: var(--color-primary-dark);
+}
+
 /* ============================================================
    Inline Edit Inputs
    ============================================================ */
@@ -1563,6 +1595,54 @@ body.recording-mode #host-view {
     flex-wrap: wrap;
     color: var(--color-text-muted);
     font-size: 0.85rem;
+}
+
+/* M6 — candidate description: the decision-relevant text. Full text colour
+   (not muted), its own line, line-height that reads. */
+.cp-notes {
+    grid-column: 1 / 2;
+    margin: 0;
+    padding: 4px 0;
+    color: var(--color-text);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    max-width: 72ch;
+}
+
+/* M6 — corroborating articles: explicit clickable list, each entry a real
+   link with its title when known. */
+.cp-corroborations {
+    grid-column: 1 / 2;
+    margin: 4px 0 2px 2px;
+    padding-left: 1.1rem;
+    font-size: 0.86rem;
+    color: var(--color-text-muted);
+    max-width: 72ch;
+}
+
+.cp-corroborations li {
+    margin: 1px 0;
+    overflow-wrap: anywhere;
+}
+
+.cp-corroborations a {
+    color: var(--color-primary-dark);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    overflow-wrap: anywhere;
+}
+
+.cp-corroborations a:hover {
+    color: var(--color-primary);
+}
+
+@media (prefers-color-scheme: dark) {
+    .cp-corroborations a {
+        color: #9ec9ad;
+    }
+    .cp-corroborations a:hover {
+        color: var(--color-primary);
+    }
 }
 
 .cp-actions {

@@ -105,7 +105,31 @@ function handlePushCandidates(array $body, Database $db): array
         $authorUrl  = (string) ($raw['author_url'] ?? '');
         $notes      = (string) ($raw['notes'] ?? '');
 
-        $row = $db->upsertCandidate($url, $title, $authorName, $authorUrl, $source, $notes, $section);
+        // M6 — corroborating articles: [{url, title, author_name, author_url}].
+        // Only array entries carry a non-empty http(s) url; everything else is
+        // dropped, so a bad record can never poison the group on selection.
+        $corroborations = null;
+        if (isset($raw['corroborations']) && is_array($raw['corroborations'])) {
+            $clean = [];
+            foreach ($raw['corroborations'] as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $eu = trim((string) ($entry['url'] ?? ''));
+                if ($eu === '' || !preg_match('#^https?://#i', $eu)) {
+                    continue;
+                }
+                $clean[] = [
+                    'url'         => $eu,
+                    'title'       => (string) ($entry['title'] ?? ''),
+                    'author_name' => (string) ($entry['author_name'] ?? ''),
+                    'author_url'  => (string) ($entry['author_url'] ?? ''),
+                ];
+            }
+            $corroborations = $clean !== [] ? $clean : null;
+        }
+
+        $row = $db->upsertCandidate($url, $title, $authorName, $authorUrl, $source, $notes, $section, $corroborations);
 
         // upsertCandidate returns null only if the row vanished after insert
         // (not possible in this process); keep the call site honest either way.
@@ -125,14 +149,56 @@ function handlePushCandidates(array $body, Database $db): array
 }
 
 /**
+ * M6 — scrapes a URL with the app's own Scraper and returns the attribution
+ * fields it found. Any fetch failure yields empty strings instead of
+ * errors: enrichment is best-effort and must never fail selection.
+ */
+function enrichUrlAttribution(string $url, Scraper $scraper, Database $db): array
+{
+    $out = ['title' => '', 'author_name' => '', 'author_url' => ''];
+    try {
+        $result = $scraper->scrape($url);
+    } catch (\Throwable $e) {
+        return $out;
+    }
+    if ($result['fetch_failed']) {
+        return $out;
+    }
+    $out['title']       = (string) ($result['title'] ?? '');
+    $out['author_name'] = (string) ($result['author_name'] ?? '');
+    $out['author_url']  = (string) ($result['author_url'] ?? '');
+
+    // Same author-history enrichment scrape_url uses: known profile URL for
+    // a name we've already stored.
+    if ($out['author_name'] !== '' && $out['author_url'] === '') {
+        $domain = extractDomain($url);
+        if ($domain !== '') {
+            $stored = $db->getAuthorUrl($domain, $out['author_name']);
+            if ($stored !== '') {
+                $out['author_url'] = $stored;
+            }
+        }
+    }
+    return $out;
+}
+
+/**
  * POST select_candidate
  *
  * Promotes one candidate into the episode. `url` is required; `section`
  * is optional and defaults to the candidate's own section (falls back to
  * 'news'). The promotion reuses Database::addItem(), so the new item is
  * identical to one added from the UI.
+ *
+ * M6 enrichment, in order, all best-effort:
+ *   1. Primary item author/title: the app's Scraper fills whatever the
+ *      candidate row is missing (attribution for the reporter/journalist).
+ *   2. Corroborating articles: each stored corroborator URL is scraped for
+ *      its own title/author and added as a secondary below the primary
+ *      (news section only), so the generated show notes carry every source.
+ * The response carries the full story group (`group`) for UI re-render.
  */
-function handleSelectCandidate(array $body, Database $db): array
+function handleSelectCandidate(array $body, Scraper $scraper, Database $db): array
 {
     $url = (string) ($body['url'] ?? '');
 
@@ -151,9 +217,155 @@ function handleSelectCandidate(array $body, Database $db): array
         return jsonError('section must be "vulnerability" or "news"');
     }
 
-    $result = $db->selectCandidate($url, $rawSection);
+    // 1 — enrich the primary row (candidate + its future item) with scraped
+    // attribution before anything is written.
+    $title       = (string) $candidate['title'];
+    $authorName  = (string) $candidate['author_name'];
+    $authorUrl   = (string) $candidate['author_url'];
 
-    return jsonSuccess(['candidate' => $result['candidate'], 'item' => $result['item']]);
+    $needsScrape = $title === '' || $authorName === '' || $authorUrl === '';
+    if ($needsScrape) {
+        $enriched = enrichUrlAttribution((string) $candidate['url'], $scraper, $db);
+        if ($title === '' && $enriched['title'] !== '') {
+            $title = $enriched['title'];
+        }
+        if ($authorName === '' && $enriched['author_name'] !== '') {
+            $authorName = $enriched['author_name'];
+        }
+        if ($authorUrl === '' && $enriched['author_url'] !== '') {
+            $authorUrl = $enriched['author_url'];
+        }
+    }
+
+    $result = $db->selectCandidate(
+        (string) $candidate['url'],
+        $rawSection,
+        $title,
+        $authorName,
+        $authorUrl
+    );
+
+    $item = $result['item'];
+
+    // Author-history enrichment for the primary (same as add_item).
+    if ($authorName !== '') {
+        $domain = extractDomain((string) $candidate['url']);
+        if ($domain !== '') {
+            $db->upsertAuthorHistory($domain, $authorName, $authorUrl);
+        }
+    }
+
+    // 2 — corroborating articles as secondaries (news groups only).
+    $group = [];
+    if ($rawSection === 'news') {
+        $corrRaw = (string) ($candidate['corroborations'] ?? '');
+        $corr = $corrRaw !== '' ? (json_decode($corrRaw, true) ?: []) : [];
+
+        $position = 0;
+        foreach ($corr as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $corrUrl = trim((string) ($entry['url'] ?? ''));
+            if ($corrUrl === '' || $corrUrl === (string) $candidate['url']) {
+                continue; // never self-nest
+            }
+            if (!$db->itemUrlExists($corrUrl)) {
+                $corrTitle   = trim((string) ($entry['title'] ?? ''));
+                $corrAuthor  = trim((string) ($entry['author_name'] ?? ''));
+                $corrProfile = trim((string) ($entry['author_url'] ?? ''));
+
+                if ($corrTitle === '' || $corrAuthor === '' || $corrProfile === '') {
+                    $enriched = enrichUrlAttribution($corrUrl, $scraper, $db);
+                    if ($corrTitle === '' && $enriched['title'] !== '') {
+                        $corrTitle = $enriched['title'];
+                    }
+                    if ($corrAuthor === '' && $enriched['author_name'] !== '') {
+                        $corrAuthor = $enriched['author_name'];
+                    }
+                    if ($corrProfile === '' && $enriched['author_url'] !== '') {
+                        $corrProfile = $enriched['author_url'];
+                    }
+                }
+
+                try {
+                    $sec = $db->addSecondary($item['id'], $corrUrl, $corrTitle, $corrAuthor, $corrProfile);
+                } catch (\Throwable $e) {
+                    $sec = null; // one bad corroborator must not sink the selection
+                }
+                if ($sec !== null) {
+                    $group[] = $sec;
+                    // Attribution learned here feeds future suggestions.
+                    if ($corrAuthor !== '') {
+                        $corrDomain = extractDomain($corrUrl);
+                        if ($corrDomain !== '') {
+                            $db->upsertAuthorHistory($corrDomain, $corrAuthor, $corrProfile);
+                        }
+                    }
+                }
+            }
+            // else: a corroborator already in the episode — leave it where
+            // Daniel put it; no re-parenting on re-selection.
+            $position++;
+        }
+    }
+
+    // Full group for the UI to splice into state: primary first, then its
+    // secondaries in insertion order. Reading from the DB (not the loop's
+    // $group only) also covers the dedupe path, where corroborators already
+    // exist as rows and were not re-created this call.
+    if ($rawSection === 'news') {
+        $flat = $db->getItemsFlat()['news'] ?? [];
+        $children = array_values(array_filter($flat,
+            fn($i) => (int) ($i['parent_id'] ?? 0) === (int) $item['id']));
+        $group = array_merge([$item], $children);
+    }
+
+    return jsonSuccess([
+        'candidate' => $result['candidate'],
+        'item'      => $item,
+        'group'     => $group,
+    ]);
+}
+
+/**
+ * POST unselect_candidate
+ *
+ * M6 — reverses a selection: the promoted item (and its corroborating
+ * secondaries, if any) is removed from the episode and the candidate row
+ * is re-offered ('pending'), so it reappears in the pool. This is the
+ * undo for a misclicked News/Vulnerability button.
+ */
+function handleUnselectCandidate(array $body, Database $db): array
+{
+    $url = (string) ($body['url'] ?? '');
+
+    if ($url === '') {
+        return jsonError('url is required');
+    }
+
+    $candidate = $db->getCandidateByUrl($url);
+
+    if ($candidate === null) {
+        return jsonError('No candidate with that url', 404);
+    }
+
+    if ($candidate['status'] !== 'selected') {
+        return jsonError('Candidate is not selected', 400);
+    }
+
+    $reverted = $db->unselectCandidate((string) $candidate['url']);
+
+    if ($reverted === false) {
+        return jsonError('No promoted item to remove for this candidate', 400);
+    }
+
+    return jsonSuccess([
+        'candidate' => $reverted,
+        'episode'   => $db->getEpisode(),
+        'items'     => $db->getItems(),
+        'candidates' => $db->getCandidates('pending'),
+    ]);
 }
 
 /**
@@ -188,6 +400,18 @@ function handleRejectCandidate(array $body, Database $db): array
 function handleListCandidates(Database $db): array
 {
     return jsonSuccess(['candidates' => $db->getCandidates('pending')]);
+}
+
+/**
+ * M6 — GET list_selected_candidates
+ *
+ * Returns candidates currently promoted (status 'selected'). Read-only;
+ * powers the "Return to pool" affordance on item rows that came from the
+ * pool (the UI matches by URL).
+ */
+function handleSelectedCandidates(Database $db): array
+{
+    return jsonSuccess(['selected' => $db->getCandidates('selected')]);
 }
 
 function handleUpdateEpisode(array $body, Database $db): array
