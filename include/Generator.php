@@ -37,6 +37,18 @@ class MarkdownGenerator
         $lines[] = '';
         foreach ($items['vulnerability'] as $item) {
             $lines[] = "- [{$item['title']}]({$item['url']})";
+
+            // M4 — research context, only when present (same treatment as the
+            // news section; indented under the bullet).
+            $context = trim((string) ($item['my_context'] ?? ''));
+            if ($context !== '') {
+                foreach (preg_split("/\r?\n/", $context) as $contextLine) {
+                    $contextLine = trim($contextLine);
+                    if ($contextLine !== '') {
+                        $lines[] = "    > {$contextLine}";
+                    }
+                }
+            }
         }
         if (!empty($items['vulnerability'])) {
             $lines[] = '';
@@ -51,6 +63,20 @@ class MarkdownGenerator
             $lines[] = "Title: {$item['title']}";
             $lines[] = "By: [{$item['author_name']}]({$item['author_url']})";
             $lines[] = "[{$item['url']}]({$item['url']})";
+
+            // M4 — research context, only when present. Multi-line input is
+            // indented so each stored line becomes its own Markdown paragraph
+            // line. Trailing newlines are stripped to keep the block tight.
+            $context = trim((string) ($item['my_context'] ?? ''));
+            if ($context !== '') {
+                $lines[] = '';
+                foreach (preg_split("/\r?\n/", $context) as $contextLine) {
+                    $contextLine = trim($contextLine);
+                    if ($contextLine !== '') {
+                        $lines[] = "> {$contextLine}";
+                    }
+                }
+            }
 
             // Blank line between items, but not after the last one.
             if ($index < count($newsItems) - 1) {

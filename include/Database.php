@@ -107,9 +107,24 @@ class Database
         }
 
         try {
-            $this->pdo->exec(
-                'ALTER TABLE items ADD COLUMN parent_id INTEGER REFERENCES items(id) ON DELETE SET NULL'
-            );
+            $this->pdo->exec('ALTER TABLE items ADD COLUMN parent_id INTEGER REFERENCES items(id) ON DELETE SET NULL');
+        } catch (\PDOException $e) {
+            // Column already exists — safe to continue.
+        }
+
+        // M4 — research context. Both nullable TEXT, matching the talking_points
+        // precedent; a missing/NULL value is normalised to '' via COALESCE on
+        // read. `status` is a free-form workflow word (e.g. 'researched',
+        // 'pending'); `my_context` holds the research block automation writes
+        // so the host has talking points and provenance for the story.
+        try {
+            $this->pdo->exec('ALTER TABLE items ADD COLUMN status TEXT');
+        } catch (\PDOException $e) {
+            // Column already exists — safe to continue.
+        }
+
+        try {
+            $this->pdo->exec('ALTER TABLE items ADD COLUMN my_context TEXT');
         } catch (\PDOException $e) {
             // Column already exists — safe to continue.
         }
@@ -207,7 +222,10 @@ class Database
     {
         $stmt = $this->pdo->prepare(
             "SELECT id, section, url, title, author_name, author_url, sort_order,
-                    COALESCE(talking_points, '') AS talking_points, parent_id
+                    COALESCE(talking_points, '') AS talking_points,
+                    COALESCE(status, '') AS status,
+                    COALESCE(my_context, '') AS my_context,
+                    parent_id
              FROM items
              WHERE section = 'vulnerability'
              ORDER BY sort_order ASC"
@@ -243,6 +261,8 @@ class Database
                  i.author_url,
                  i.sort_order,
                  COALESCE(i.talking_points, '') AS talking_points,
+                 COALESCE(i.status, '') AS status,
+                 COALESCE(i.my_context, '') AS my_context,
                  i.parent_id
              FROM items i
              LEFT JOIN primary_order po ON po.id = COALESCE(i.parent_id, i.id)
@@ -510,6 +530,59 @@ class Database
         // No trigger can transform talking_points, so we can return the row we
         // already have rather than issuing a third SELECT round-trip.
         $item['talking_points'] = $talkingPoints;
+
+        return $item;
+    }
+
+    /**
+     * M4 — Update the research-context fields on an item.
+     *
+     * Both `$status` and `$my_context` are optional per call: pass `null` to
+     * leave a field untouched (e.g. an agent writes research context but does
+     * not yet know the workflow status). When both are null the call is a
+     * validation-only no-op that still returns the current row.
+     *
+     * `$my_context` is a free-form block of text (markdown or plain). `$status`
+     * is a short workflow word; it is not validated against an allow-list so
+     * callers can use whatever fits their pipeline — the app treats it as a
+     * label, not a state machine.
+     *
+     * Returns the updated row on success, or false if no item has the given ID.
+     *
+     * @param string|null $status     New value for items.status, or null to leave unchanged
+     * @param string|null $myContext  New value for items.my_context, or null to leave unchanged
+     * @return array|false
+     */
+    public function updateItemContext(int $id, ?string $status, ?string $myContext): array|false
+    {
+        $itemStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+        $itemStmt->execute([':id' => $id]);
+        $item = $itemStmt->fetch();
+
+        if ($item === false) {
+            return false;
+        }
+
+        $sets   = [];
+        $params = [':id' => $id];
+
+        if ($status !== null) {
+            $sets[]   = 'status = :status';
+            $params[':status'] = $status;
+        }
+        if ($myContext !== null) {
+            $sets[]   = 'my_context = :my_context';
+            $params[':my_context'] = $myContext;
+        }
+
+        if ($sets !== []) {
+            $sql = 'UPDATE items SET ' . implode(', ', $sets) . ' WHERE id = :id';
+            $this->pdo->prepare($sql)->execute($params);
+
+            $itemStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+            $itemStmt->execute([':id' => $id]);
+            $item = $itemStmt->fetch();
+        }
 
         return $item;
     }
