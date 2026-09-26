@@ -15,6 +15,8 @@ const state = {
     items:   { vulnerability: [], news: [] },
     /** M3 — pending candidate pool (automated story offers). */
     candidates: [],
+    /** M6 — selected (promoted) candidates → "return to pool" affordance. */
+    selectedCandidates: [],
     config:  null,
 };
 
@@ -336,8 +338,29 @@ function renderItem(item, section) {
     deleteBtn.setAttribute('aria-label', `Delete item: ${item.title || item.url}`);
     deleteBtn.addEventListener('click', () => handleDeleteItem(item.id, section));
 
+    // M6 — "return to pool" (inverse of a candidate selection): available on
+    // top-level items that came in via select_candidate, matched by URL
+    // against the selected-candidates list. Removes the item (and its
+    // secondaries) and re-offers the story in the pool.
+    let rowBtns = deleteBtn;
+    const selCand = (state.selectedCandidates || []).find(
+        (c) => c && c.url !== undefined && c.url === item.url);
+    if (selCand) {
+        rowBtns = document.createElement('div');
+        rowBtns.className = 'item-actions';
+        const backBtn = document.createElement('button');
+        backBtn.type = 'button';
+        backBtn.className = 'item-back-to-pool';
+        backBtn.textContent = '↩ Pool';
+        backBtn.title = 'Return to candidate pool (undo selection)';
+        backBtn.setAttribute('aria-label', `Return to pool: ${item.title || item.url}`);
+        backBtn.addEventListener('click', () => handleReturnToPool(selCand, item, section));
+        rowBtns.appendChild(backBtn);
+        rowBtns.appendChild(deleteBtn);
+    }
+
     row.appendChild(fieldsEl);
-    row.appendChild(deleteBtn);
+    row.appendChild(rowBtns);
 
     return row;
 }
@@ -556,6 +579,7 @@ const candidateModule = (() => {
         sourceBadge.textContent = cand.source || '';
         sourceBadge.title = `Offered by ${cand.source || 'manual'}`;
 
+        // M6 — author (when the push or a later scrape supplied attribution).
         const meta = document.createElement('div');
         meta.className = 'cp-meta';
         if (cand.author_name) {
@@ -564,11 +588,43 @@ const candidateModule = (() => {
             author.textContent = cand.author_name;
             meta.appendChild(author);
         }
-        if (cand.notes && cand.notes.trim() !== '') {
-            const notes = document.createElement('span');
-            notes.className = 'cp-notes';
-            notes.textContent = cand.notes;
-            meta.appendChild(notes);
+        if (meta.childNodes.length) row.appendChild(meta);
+
+        // M6 — description: full text colour, its own line (this is the
+        // decision-relevant text, it must read well, not be an afterthought).
+        const notes = (cand.notes || '').trim();
+        if (notes !== '') {
+            const desc = document.createElement('p');
+            desc.className = 'cp-notes';
+            desc.textContent = notes;
+            row.appendChild(desc);
+        }
+
+        // M6 — corroborating URL list (structured candidates.corroborations):
+        // visible, clickable, one line per source, each labelled with its
+        // title when the push knew it.
+        let corr = (cand.corroborations || []);
+        if (typeof corr === 'string') {
+            try { corr = JSON.parse(corr) || []; } catch { corr = []; }
+        }
+        if (Array.isArray(corr) && corr.length > 0) {
+            const ul = document.createElement('ul');
+            ul.className = 'cp-corroborations';
+            ul.setAttribute('aria-label', 'Corroborating articles');
+            for (const c of corr) {
+                if (!c || typeof c.url !== 'string' || c.url.trim() === '') continue;
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = c.url;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                const label = (c.title && c.title.trim() !== '') ? c.title.trim() : c.url;
+                a.textContent = label;
+                a.title = c.url;
+                li.appendChild(a);
+                ul.appendChild(li);
+            }
+            if (ul.childNodes.length) row.appendChild(ul);
         }
 
         // M5 — explicit section choice: two named buttons instead of the
@@ -621,14 +677,19 @@ const candidateModule = (() => {
         buttons.forEach(b => { b.disabled = true; });
         try {
             const data = await apiCall('select_candidate', { url: cand.url, section });
-            // Merge the promoted item into state.items so that section renders.
-            state.items[section].push(data.item);
+            // M6 — splice the promoted group (primary + corroborating
+            // secondaries) into state so the section renders it.
+            const group = (data.group && data.group.length > 0) ? data.group : [data.item];
+            if (Array.isArray(state.items[section])) {
+                state.items[section].push(...group);
+            }
             removeCandidateFromState(cand.url);
             // Re-render the affected section list plus the pool itself.
             if (section === 'vulnerability') renderVulnerabilityList();
             else renderNewsList();
             render();
-            showToast('success', `Selected → ${section === 'news' ? 'News' : 'Vulnerability'}`);
+            showToast('success', `Selected → ${section === 'news' ? 'News' : 'Vulnerability'}`
+                + (group.length > 1 ? ` (+${group.length - 1} corroborating)` : ''));
         } catch {
             buttons.forEach(b => { b.disabled = false; });
         }
@@ -657,6 +718,42 @@ const candidateModule = (() => {
 /* ----------------------------------------------------------
    10.10 — Delete item with confirmation
    ---------------------------------------------------------- */
+
+/* ----------------------------------------------------------
+   M6 — Return to pool: undo of a misclicked candidate selection.
+   Server side removes the item and re-offers the candidate; the
+   UI refreshes both lists from the response so nothing is left
+   in a stale state (secondaries included).
+   ---------------------------------------------------------- */
+async function handleReturnToPool(cand, item, section) {
+    const confirmed = window.confirm(
+        `Return "${item.title || item.url}" to the candidate pool?`
+        + (item.parent_id === null ? '' : ' Its corroborating sub-articles come with it.')
+    );
+    if (!confirmed) return;
+    try {
+        const data = await apiCall('unselect_candidate', { url: cand.url });
+        state.candidates = (data.candidates && data.candidates.length > 0)
+            ? data.candidates
+            : (state.candidates || []).concat(data.candidate);
+        state.selectedCandidates = (state.selectedCandidates || [])
+            .filter((c) => !(c && c.url !== undefined && c.url === cand.url));
+        // Remove the group from state (primary + secondaries).
+        const groupId = item.id;
+        if (Array.isArray(state.items[section])) {
+            state.items[section] = state.items[section].filter(
+                (i) => i.id !== groupId && i.parent_id !== groupId);
+        }
+        renderVulnerabilityList();
+        renderNewsList();
+        candidateModule.render();
+        updateStartRecordingButton();
+        showToast('success', 'Returned to candidate pool.');
+    } catch {
+        // Error toast already shown by apiCall
+    }
+}
+
 async function handleDeleteItem(id, section) {
     const confirmed = window.confirm('Delete this item? This cannot be undone.');
     if (!confirmed) return;
@@ -2646,6 +2743,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.episode    = structuredClone(INITIAL_STATE.episode);
     state.items      = structuredClone(INITIAL_STATE.items);
     state.candidates = structuredClone(INITIAL_STATE.candidates || []);
+    state.selectedCandidates = structuredClone(INITIAL_STATE.selectedCandidates || []);
     state.config     = structuredClone(INITIAL_STATE.config);
 
     // Initial render

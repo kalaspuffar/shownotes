@@ -61,7 +61,7 @@ if ($expectedToken !== '' && !hash_equals(
 // Read-only actions. GET-only, parameters from the query string. No
 // mutations and no scraper — a GET request must never leave the database
 // read path, which keeps reads uniformly cheap and side-effect free.
-$READ_ACTIONS = ['get_episode', 'list_items', 'list_candidates'];
+$READ_ACTIONS = ['get_episode', 'list_items', 'list_candidates', 'list_selected_candidates'];
 
 // Action handlers (jsonError/jsonSuccess + the handle*() functions) live in
 // api_handlers.php, kept out of this entry point so it stays short. They
@@ -87,6 +87,7 @@ if ($method === 'GET') {
             'get_episode'     => handleGetEpisode($db),
             'list_items'      => handleListItems($db),
             'list_candidates' => handleListCandidates($db),
+            'list_selected_candidates' => handleSelectedCandidates($db),
         };
     } catch (\Throwable $e) {
         http_response_code(500);
@@ -139,8 +140,10 @@ try {
         'reorder_group'          => handleReorderGroup($body, $db),
         // M3 — candidate pool (writes).
         'push_candidates'        => handlePushCandidates($body, $db),
-        'select_candidate'       => handleSelectCandidate($body, $db),
+        'select_candidate'       => handleSelectCandidate($body, $scraper, $db),
         'reject_candidate'       => handleRejectCandidate($body, $db),
+        // M6 — select undo (return a misclicked promotion to the pool).
+        'unselect_candidate'     => handleUnselectCandidate($body, $db),
         // M4 — research context.
         'update_item_context'    => handleUpdateItemContext($body, $db),
         default                  => jsonError('Unknown action', 400),
