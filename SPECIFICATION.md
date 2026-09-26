@@ -1161,6 +1161,8 @@ GET /api.php?action=list_candidates
 - `url`: required — must be a known candidate, else `404`
 - `section`: optional, `"vulnerability"` or `"news"`; an unknown value returns `400`
 
+**UI presentation (M5):** The candidate row offers three explicit buttons — **News**, **Vulnerability**, **Reject**. The button matching the candidate's own `section` is styled as the default (solid); the other section button is the override (outlined). There is no `confirm()`/`prompt()` dialog in this flow: the clicked button *is* the decision, and any of the three disables the whole control cluster while the request is in flight (re-enabled on failure). Rejecting still asks for a single `confirm()` because it discards the offer.
+
 **Response (success):**
 ```json
 {
