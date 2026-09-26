@@ -375,7 +375,46 @@ function buildItemField(item, key, label, section) {
     labelEl.className = 'item-field-label';
     labelEl.textContent = label + ':';
 
+    // URL fields are the article links Daniel opens to review the story
+    // (and writes his notes about). Editing text here was a dead end for
+    // that — opening in a new tab or copy-pasting the URL is the actual
+    // workflow — so url/author_url render as a one-click link (new tab)
+    // plus an explicit Copy button (dual-monitor: app on one screen,
+    // article on the other). Title/author stay click-to-edit for fixing
+    // scrape typos.
+    const isUrlField = (key === 'url' || key === 'author_url');
     const valueEl = document.createElement('span');
+
+    if (isUrlField && typeof item[key] === 'string' && item[key].trim() !== '') {
+        valueEl.className = 'item-field-value item-url';
+        valueEl.removeAttribute('title');
+        const link = document.createElement('a');
+        link.className = 'item-url-link';
+        link.href = item[key];
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.title = item[key];
+        try { link.textContent = new URL(item[key]).host; } catch { link.textContent = item[key]; }
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'item-copy-btn';
+        copyBtn.textContent = '⧉ Copy';
+        copyBtn.title = 'Copy full URL';
+        copyBtn.setAttribute('aria-label', `Copy ${label.toLowerCase()}: ${item[key]}`);
+        copyBtn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            const ok = await copyTextToClipboard(item[key]);
+            copyBtn.textContent = ok ? '✓ Copied' : '✗ Failed';
+            copyBtn.classList.add(ok ? 'copied' : 'failed');
+            setTimeout(() => { copyBtn.textContent = '⧉ Copy'; copyBtn.classList.remove('copied', 'failed'); }, 1400);
+        });
+        valueEl.appendChild(link);
+        valueEl.appendChild(copyBtn);
+        fieldEl.appendChild(labelEl);
+        fieldEl.appendChild(valueEl);
+        return fieldEl;
+    }
+
     valueEl.className = 'item-field-value';
     valueEl.textContent = item[key] || '';
 
