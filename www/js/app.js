@@ -2820,3 +2820,5 @@ document.addEventListener('DOMContentLoaded', () => {
     // Ensure buttons start in correct disabled state
     updateStartRecordingButton();
 });
+
+// [probe] merge-capability test — drop me
