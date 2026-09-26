@@ -9,8 +9,11 @@ header('Content-Type: application/json');
 // Bootstrap
 // -------------------------------------------------------------------------
 
-// Reject non-POST requests immediately.
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+// Mutations are POST-only; the read-only actions (get_episode, list_items)
+// are GET-only and read their parameters from the query string.
+$method = $_SERVER['REQUEST_METHOD'];
+
+if ($method !== 'POST' && $method !== 'GET') {
     http_response_code(405);
     echo json_encode(['success' => false, 'error' => 'Method not allowed']);
     exit;
@@ -18,22 +21,21 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $config = require __DIR__ . '/../etc/config.php';
 require_once __DIR__ . '/../include/Database.php';
-require_once __DIR__ . '/../include/Scraper.php';
-require_once __DIR__ . '/../include/Generator.php';
 
-$db      = Database::getInstance();
-$scraper = new Scraper($config);
+// Read actions need only Database; the mutation path additionally requires
+// the Scraper and Generator classes (pulled in the POST branch below), so
+// read requests never load the scraper chain.
+$db = Database::getInstance();
 
 // -------------------------------------------------------------------------
 // API token gate
 // -------------------------------------------------------------------------
 //
 // When $config['api_token'] is set (non-empty), every request to this endpoint
-// must carry a matching X-API-Token header. The in-app UI is updated separately
-// (M3) to present the token; anything that doesn't know it gets a 401. When
-// the token is an empty string (the shipped default in config.php.example)
-// the gate is a no-op and the existing LAN-only behaviour is preserved
-// unchanged.
+// must carry a matching X-API-Token header. The token gate applies to writes
+// and reads alike, so automation that sets a token must send X-API-Token on
+// its GET requests as well; in the shipped default (empty token) the gate is
+// a no-op and the existing LAN-only behaviour is preserved unchanged.
 //
 // We compare the hash of the presented token against the hash of the
 // configured one with hash_equals so the comparison is constant-time and the
@@ -56,21 +58,68 @@ if ($expectedToken !== '' && !hash_equals(
     exit;
 }
 
-// Decode the JSON request body.
-$body   = json_decode(file_get_contents('php://input'), true) ?? [];
-$action = $body['action'] ?? '';
+// Read-only actions. GET-only, parameters from the query string. No
+// mutations and no scraper — a GET request must never leave the database
+// read path, which keeps reads uniformly cheap and side-effect free.
+$READ_ACTIONS = ['get_episode', 'list_items'];
 
 // Action handlers (jsonError/jsonSuccess + the handle*() functions) live in
-// api_handlers.php, kept out of this entry point so it stays short and so a
-// future GET read endpoint can reuse the same set of helpers. They expect
-// $config, $db, $scraper, $body and $action to already be in scope. Loaded
-// here, after the token gate, so an unauthorised request never pulls in the
-// handler/scraper dependency chain.
+// api_handlers.php, kept out of this entry point so it stays short. They
+// expect $config, $db, $scraper, $body and $action to already be in scope.
+// Loaded here, after the token gate, so an unauthorised request never pulls
+// in the handler chain.
 require_once __DIR__ . '/api_handlers.php';
 
 // -------------------------------------------------------------------------
 // Action dispatch
 // -------------------------------------------------------------------------
+
+if ($method === 'GET') {
+    $action = (string) ($_GET['action'] ?? '');
+
+    if (!in_array($action, $READ_ACTIONS, true)) {
+        echo json_encode(jsonError('Unknown action', 400));
+        exit;
+    }
+
+    try {
+        $response = match ($action) {
+            'get_episode' => handleGetEpisode($db),
+            'list_items'  => handleListItems($db),
+        };
+    } catch (\Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        exit;
+    }
+
+    echo json_encode($response);
+    exit;
+}
+
+// POST path: mutations only.
+if (in_array((string) ($_GET['action'] ?? ''), $READ_ACTIONS, true)) {
+    echo json_encode(jsonError('Read-only action — use GET', 405));
+    exit;
+}
+
+// POST path: mutations only. Mutation handlers may reference the Scraper and
+// MarkdownGenerator classes, so their definitions are pulled in here on the
+// mutation path only — read requests never load the scraper chain.
+require_once __DIR__ . '/../include/Scraper.php';
+require_once __DIR__ . '/../include/Generator.php';
+
+$scraper = new Scraper($config);
+$body   = json_decode(file_get_contents('php://input'), true) ?? [];
+$action = $body['action'] ?? '';
+
+// Reads travel as GET (query-string action). If one arrives in a POST body
+// it is the wrong method for the action — say so explicitly rather than
+// reporting it as an unknown mutation.
+if (in_array((string) $action, $READ_ACTIONS, true)) {
+    echo json_encode(jsonError('Read-only action — use GET', 405));
+    exit;
+}
 
 try {
     $response = match ($action) {

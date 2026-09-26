@@ -23,6 +23,40 @@ function jsonSuccess(array $data): array
 // Action handlers
 // -------------------------------------------------------------------------
 
+/**
+ * GET get_episode
+ *
+ * Returns the single episode row. Reads only — no parameters.
+ */
+function handleGetEpisode(Database $db): array
+{
+    return jsonSuccess(['episode' => $db->getEpisode()]);
+}
+
+/**
+ * GET list_items[&section=vulnerability|news]
+ *
+ * Returns all items grouped by section, or a single section's list when the
+ * `section` parameter names one. The `section` parameter is validated against
+ * the same allow-list used by writes elsewhere in this file.
+ */
+function handleListItems(Database $db): array
+{
+    $rawSection = (string) ($_GET['section'] ?? '');
+
+    if ($rawSection !== '') {
+        $allowed = ['vulnerability', 'news'];
+
+        if (!in_array($rawSection, $allowed, true)) {
+            return jsonError('section must be "vulnerability" or "news"');
+        }
+
+        return jsonSuccess(['items' => $db->getItems()[$rawSection]]);
+    }
+
+    return jsonSuccess(['items' => $db->getItems()]);
+}
+
 function handleUpdateEpisode(array $body, Database $db): array
 {
     $week       = filter_var($body['week_number'] ?? null, FILTER_VALIDATE_INT);

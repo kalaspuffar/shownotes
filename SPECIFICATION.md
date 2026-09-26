@@ -378,15 +378,21 @@ Lines N+3…: Three-line block per news item:
 
 ### 3.6 API Handler — `www/api.php`
 
-**Purpose:** Handles all AJAX mutations from the frontend. Accepts POST requests with a JSON body, dispatches to the appropriate handler, and returns a JSON response.
+**Purpose:** Handles all frontend and automation traffic. Mutation actions are POST with a JSON body; read-only actions (`get_episode`, `list_items`) are GET with query-string parameters. All requests dispatch to a handler and return a JSON response.
 
-**Request Format (all endpoints):**
+**Request Format (mutations):**
 
 ```
 POST /api.php
 Content-Type: application/json
 
 { "action": "<action_name>", ...fields }
+```
+
+**Request Format (reads):**
+
+```
+GET /api.php?action=<action_name>[&section=vulnerability|news]
 ```
 
 **Response Format (all endpoints):**
@@ -702,9 +708,9 @@ CREATE INDEX IF NOT EXISTS idx_author_history_domain
 
 ## 5. API Specifications
 
-All requests are `POST /api.php` with `Content-Type: application/json`.
+Mutation actions are `POST /api.php` with `Content-Type: application/json`; read-only actions (`get_episode`, `list_items`) are `GET` with query-string parameters (see § 5.10–5.11).
 All responses have `Content-Type: application/json`.
-HTTP status codes: 200 (success), 400 (bad request), 500 (server error).
+HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only when `api_token` is set, see § 6.6), 405 (wrong method for the action), 500 (server error).
 
 ---
 
@@ -1010,6 +1016,67 @@ HTTP status codes: 200 (success), 400 (bad request), 500 (server error).
   }
 }
 ```
+
+---
+
+### 5.10 Action: `get_episode` (read)
+
+**Description:** Returns the single episode row. Read-only, side-effect free. Served over `GET` so unattended automation and future UI views can poll the current episode state without POST semantics.
+
+**Request:**
+```
+GET /api.php?action=get_episode
+```
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "episode": { "id": 1, "week_number": 8, "year": 2026, "youtube_url": "https://..." }
+  }
+}
+```
+
+**Method rules:** `405` if sent as POST, `400` if the action is unknown.
+
+---
+
+### 5.11 Action: `list_items` (read)
+
+**Description:** Returns all items grouped by section, or a single section's ordered list when `section` names one. Item ordering matches `INITIAL_STATE` (vulnerability by `sort_order`; news interleaved as primary-then-secondaries per group).
+
+**Request:**
+```
+GET /api.php?action=list_items
+GET /api.php?action=list_items&section=news
+```
+
+**Validation:**
+- `section` (optional): must be `"vulnerability"` or `"news"`; anything else returns `400`
+
+**Response (success, no section — grouped):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": {
+      "vulnerability": [ { "id": 1, "section": "vulnerability", "url": "https://...", ... } ],
+      "news":          [ { "id": 2, "section": "news", "url": "https://...", ... } ]
+    }
+  }
+}
+```
+
+**Response (success, with section — flat list):**
+```json
+{
+  "success": true,
+  "data": { "items": [ { "id": 2, "section": "news", "url": "https://...", ... } ] }
+}
+```
+
+**Method rules:** `405` if sent as POST (whether in the body or the query string), `400` on an invalid `section` value or unknown action.
 
 ---
 
