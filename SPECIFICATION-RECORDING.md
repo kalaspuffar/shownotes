@@ -43,6 +43,8 @@ This specification extends the Cozy News Corner Show Notes Generator into a full
 
 3. **Audience Display Window (Audience View)** — A second browser window (`www/audience.php`), shown on the second monitor, that embeds the current article in a full-viewport iframe and stays synchronised with the Host View via a lightweight PHP WebSocket server (`bin/ws-server.php`).
 
+4. **Per-Story Hook + Show Intro (M7)** — A prominent one-line "open" (hook) field per top-level story, editable in the add-article modal and click-to-edit on each item card. The episode's filled hooks become the first stop of every show: a host-view intro ("This week we'll cover…" with the hook list, title and week) and an audience intro card (`www/intro.php`, title/tagline/week background plus the same list) so the host can open the show with a teaser.
+
 ### Key Objectives
 
 - Allow the host to navigate an entire episode with a single key press, with the audience display updating within 100 ms.
@@ -412,6 +414,15 @@ saveTalkingPoints(itemId, panelElement)
 function buildRunOrder(state) {
     const order = [];
 
+    // M7 — 0. Show intro: the episode's filled hooks, read by the host as
+    //     "This week we'll cover…". Audience window → /intro.php (title,
+    //     week, tagline, same list). Always present — it is stop #1.
+    const hooks = [...(state.items.vulnerability || []),
+                  ...(state.items.news || [])]
+        .filter(i => i.parent_id === null && (i.hook || '').trim())
+        .map(i => ({ id: i.id, title: i.title, hook: i.hook.trim() }));
+    order.push({ type: 'intro', hooks });
+
     // 1. Vulnerability items
     const vulns = state.items.vulnerability
         .slice()
@@ -442,8 +453,9 @@ function buildRunOrder(state) {
 - Advancing past the last item: no-op (no cycling).
 - Retreating before the first item: no-op.
 - Crossing a segment break: display the segment break marker until the next navigation input.
+- Landing on a `type: 'intro'` entry: render the intro host view (title, week, hook list, or an empty-state line if no hook is set yet) and point the audience window at `/intro.php`. No WebSocket navigate event is sent (the intro page is not an article).
 - On each navigation that lands on a `type: 'item'` entry: call `wsClient.sendNavigate(item)`.
-- On entry to recording mode: navigate to index 0 immediately (emit the first navigate event).
+- On entry to recording mode: navigate to index 0 (the intro) immediately.
 
 **Host View rendering:**
 
@@ -1205,6 +1217,7 @@ CREATE INDEX IF NOT EXISTS idx_items_parent
 | `sort_order` | INTEGER | NOT NULL DEFAULT 0 | **Semantic change for news:** now represents position among sibling items at the same level (top-level items among top-level items; secondaries within their group) |
 | `talking_points` | TEXT | nullable | NEW. Newline-delimited bullet text. NULL/'' = no talking points. Only set on items where `parent_id IS NULL` and `section = 'news'`. |
 | `parent_id` | INTEGER | nullable, FK → `items.id` ON DELETE SET NULL | NEW. NULL = standalone or primary link. Non-null = secondary link, points to primary's `id`. |
+| `hook` | TEXT | nullable | NEW (M7). The per-story "open" — one line the host reads to close the show intro. Shown in the prep view (click-to-edit on the card), the host-view intro and item stops, and the audience intro card (§8.4a). NEVER emitted in the generated Markdown. NULL/'' = no hook; only top-level items count for the intro lists (a secondary may carry one, but it is not listed). |
 
 ### 4.3 Data Invariants (Application-Enforced)
 
@@ -1574,6 +1587,18 @@ When `runOrder[currentIndex].type === 'segment_break'`:
 - No navigate WebSocket event is sent.
 - Pressing Next advances to the first news item and sends its navigate event.
 
+### 7.3a Show Intro (M7)
+
+When `runOrder[currentIndex].type === 'intro'` (always `runOrder[0]`, the first stop of every episode):
+- `renderHostView` shows the intro layout (`.hv-intro` element): `SHOW INTRO` label, the show title (`config.show_title`), the episode week pill ("Week N of YYYY" when the episode row has a week), the "This week we'll cover…" lead line, and the list of filled hooks as numbered rows (hook text + muted article-title chip).
+- No hooks set yet → a single dashed "No hooks yet — set each story's open in the prep view" row (host still opens from the prep screen).
+- Navigation counter reads "Intro" (not a numbered stop); the audience window is pointed at `/intro.php` (see §8.4a). No WebSocket event is sent.
+- Pressing Next advances to the first article; the audience window navigates there.
+
+### 7.3b Per-Item Hook Line (M7)
+
+Each item stop in the host view renders the story's hook (when set) as an accent-bordered "OPEN" line under the article URL, so the host reads the open for the story currently on the audience screen. Items without a hook show nothing extra.
+
 ### 7.4 Navigation Counter
 
 Displayed as "Item N of M" where:
@@ -1735,6 +1760,16 @@ If the WebSocket server is unavailable, `audience.php` shows:
 - The `#disconnect-dot` is shown in its disconnected state.
 - The reconnect loop continues every 3 s silently.
 - No error is shown to the audience (the message is styled to be minimal and only relevant to the host).
+
+### 8.4a Show Intro Card — `www/intro.php` (M7)
+
+Dedicated, self-contained page for the second monitor at the open of the show (no iframe, no WebSocket). The host view's intro stop (§7.3a) points the audience window here via `audienceWindow.location.href = '/intro.php'`; the host reads off the screen while saying "This week we'll cover…".
+
+- **Data source (server-side, live):** `config.show_title` + `config.show_tagline` + the episode row (`week_number`/`year`) + `Database::getHooks()` — the top-level items with a filled hook, in run order (vulnerabilities first, then news, each in `sort_order`). Because it is rendered server-side, the visible card always matches the prep view, even with the WebSocket server stopped.
+- **Layout:** two columns over a dark background consistent with the recording palette (deep navy `#1a1a2e` gradient, accent `#e94560`): left = show title (large), tagline, week pill ("Week N of YYYY"); right = "This week we'll cover…" lead + numbered hook rows (hook text large, muted article title underneath as provenance).
+- **No hooks yet:** the right column shows a single dashed line "Hooks go here — set each story's open in the prep view." The title/week column still renders, so the screen is never blank.
+- **Security:** all values HTML-escaped (`htmlspecialchars`, UTF-8). No scripts beyond the page's own.
+- **Scope:** presenter aid only — not an article, not included in the generated Markdown.
 
 ### 8.5 Disconnection Indicator
 

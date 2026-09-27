@@ -129,6 +129,18 @@ class Database
             // Column already exists — safe to continue.
         }
 
+        // M7 — per-story hook. A short, punchy "one line for the open" that
+        // Daniel writes while researching (it lives in the research-brief
+        // template under **Hook**). Promoted in the UI into the presenter
+        // view (intro + "This week we cover" list) and the audience intro
+        // card. Nullable so existing episodes are untouched; normalised to
+        // '' via COALESCE on read, same as talking_points / my_context.
+        try {
+            $this->pdo->exec('ALTER TABLE items ADD COLUMN hook TEXT');
+        } catch (\PDOException $e) {
+            // Column already exists — safe to continue.
+        }
+
         $this->pdo->exec(<<<'SQL'
             CREATE INDEX IF NOT EXISTS idx_items_parent ON items (parent_id, sort_order)
         SQL);
@@ -236,6 +248,7 @@ class Database
                     COALESCE(talking_points, '') AS talking_points,
                     COALESCE(status, '') AS status,
                     COALESCE(my_context, '') AS my_context,
+                    COALESCE(hook, '') AS hook,
                     parent_id
              FROM items
              WHERE section = 'vulnerability'
@@ -274,6 +287,7 @@ class Database
                  COALESCE(i.talking_points, '') AS talking_points,
                  COALESCE(i.status, '') AS status,
                  COALESCE(i.my_context, '') AS my_context,
+                 COALESCE(i.hook, '') AS hook,
                  i.parent_id
              FROM items i
              LEFT JOIN primary_order po ON po.id = COALESCE(i.parent_id, i.id)
@@ -301,7 +315,7 @@ class Database
     }
 
     /** Inserts a new item; assigns the next sort_order within the section; returns the new row. */
-    public function addItem(string $section, string $url, string $title, string $authorName, string $authorUrl, string $talkingPoints = ''): array
+    public function addItem(string $section, string $url, string $title, string $authorName, string $authorUrl, string $talkingPoints = '', ?string $hook = null): array
     {
         // Compute the next sort_order for this section (0 if the section is empty).
         $maxStmt = $this->pdo->prepare(
@@ -310,9 +324,12 @@ class Database
         $maxStmt->execute([':section' => $section]);
         $nextOrder = (int) $maxStmt->fetchColumn();
 
+        // M7 — hook is optional at creation; null clears it to the column default.
+        $hookValue = ($hook !== null && trim($hook) !== '') ? trim($hook) : null;
+
         $insertStmt = $this->pdo->prepare(
-            'INSERT INTO items (section, url, title, author_name, author_url, sort_order, talking_points)
-             VALUES (:section, :url, :title, :author_name, :author_url, :sort_order, :talking_points)'
+            'INSERT INTO items (section, url, title, author_name, author_url, sort_order, talking_points, hook)
+             VALUES (:section, :url, :title, :author_name, :author_url, :sort_order, :talking_points, :hook)'
         );
         $insertStmt->execute([
             ':section'        => $section,
@@ -322,6 +339,7 @@ class Database
             ':author_url'     => $authorUrl,
             ':sort_order'     => $nextOrder,
             ':talking_points' => $talkingPoints !== '' ? $talkingPoints : null,
+            ':hook'           => $hookValue,
         ]);
 
         $newId   = (int) $this->pdo->lastInsertId();
@@ -596,6 +614,81 @@ class Database
         }
 
         return $item;
+    }
+
+    /**
+     * M7 — Set the per-story hook for an item.
+     *
+     * The hook is a short "one line for the open" written by the host while
+     * researching. It is shown in the presenter intro, the "This week we
+     * cover" list, and the audience intro card. It does NOT feed the
+     * generated Markdown (show notes are unchanged).
+     *
+     * A single-field write modelled on the updateItemContext() pattern (same
+     * nullable-TEXT + COALESCE-on-read convention). `''` clears the hook.
+     *
+     * @return array|false the updated row, or false if no such id exists
+     */
+    public function updateHook(int $id, string $hook): array|false
+    {
+        $itemStmt = $this->pdo->prepare('SELECT * FROM items WHERE id = :id');
+        $itemStmt->execute([':id' => $id]);
+        $item = $itemStmt->fetch();
+
+        if ($item === false) {
+            return false;
+        }
+
+        // `''` (or whitespace-only) clears the hook → NULL, matching the
+        // addItem() storage convention.
+        $hookValue = (trim($hook) === '') ? null : trim($hook);
+
+        $this->pdo->prepare('UPDATE items SET hook = :hook WHERE id = :id')
+            ->execute([':hook' => $hookValue, ':id' => $id]);
+
+        // The hook is a plain scalar: patch the row in memory rather than
+        // issuing a third SELECT round-trip (matches updateTalkingPoints()).
+        $item['hook'] = $hookValue ?? '';
+
+        return $item;
+    }
+
+    /**
+     * M7 — Ordered list of the episode's filled hooks in run order.
+     *
+     * Returns one entry per top-level item (vulnerabilities first, then news,
+     * each section in sort_order) whose `hook` is non-empty:
+     *
+     *   [ { id, section, title, hook }, … ]
+     *
+     * The presenter view uses this to build the "This week we cover" list and
+     * the intro; a host without a browser can still read the same data via the
+     * API. Items with an empty hook are skipped, so a partially-researched
+     * episode shows only what is ready to open with.
+     *
+     * @return list<array{id:int, section:string, title:string, hook:string}>
+     */
+    public function getHooks(): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT id, section, title, hook
+             FROM items
+             WHERE parent_id IS NULL
+               AND hook IS NOT NULL
+               AND TRIM(hook) != ''
+             ORDER BY section = 'vulnerability' DESC, sort_order ASC, id ASC"
+        );
+        $stmt->execute();
+
+        $rows  = $stmt->fetchAll();
+        return array_map(static function (array $r) {
+            return [
+                'id'      => (int) $r['id'],
+                'section' => $r['section'],
+                'title'   => (string) $r['title'],
+                'hook'    => trim((string) $r['hook']),
+            ];
+        }, $rows);
     }
 
     /**

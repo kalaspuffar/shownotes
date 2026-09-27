@@ -138,6 +138,8 @@ try {
         'nest_item'              => handleNestItem($body, $db),
         'extract_item'           => handleExtractItem($body, $db),
         'reorder_group'          => handleReorderGroup($body, $db),
+        // M7 — per-story hook (presenter/audience intro).
+        'update_hook'            => handleUpdateHook($body, $db),
         // M3 — candidate pool (writes).
         'push_candidates'        => handlePushCandidates($body, $db),
         'select_candidate'       => handleSelectCandidate($body, $scraper, $db),

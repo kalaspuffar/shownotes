@@ -305,6 +305,15 @@ function renderItem(item, section) {
         fieldsEl.appendChild(fieldEl);
     }
 
+    // M7 — HOOK: a prominent, always-present one-line "the open" field.
+    // Distinct styling from the other (muted) fields so it stands out —
+    // this is the line Daniel reads on the audience intro card.
+    // Primary/standalone items only (secondaries inherit their story but the
+    // hook belongs to the story the host opens, i.e. the primary).
+    if (item.parent_id === null || item.parent_id === undefined) {
+        fieldsEl.appendChild(buildHookField(item, section));
+    }
+
     // M4 — research context (written by automation; displayed read-only).
     // status badge + my_context block, both shown when present.
     const status = (item.status || '').trim();
@@ -363,6 +372,92 @@ function renderItem(item, section) {
     row.appendChild(rowBtns);
 
     return row;
+}
+
+/* M7 — Builds the prominent HOOK field for an item row.
+   Click-to-edit; auto-saves via update_hook (debounced + on blur).
+   Styled to stand out (the "one line for the open"). */
+function buildHookField(item, section) {
+    const fieldEl = document.createElement('div');
+    fieldEl.className = 'item-field item-hook';
+    fieldEl.dataset.field = 'hook';
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'item-field-label item-hook-label';
+    labelEl.textContent = 'Open:';
+    labelEl.title = 'The open — the one-line hook for this story';
+
+    const valueEl = document.createElement('span');
+    valueEl.className = 'item-field-value item-hook-value';
+    valueEl.textContent = (item.hook || '').trim();
+    if (!valueEl.textContent) {
+        valueEl.classList.add('item-hook-empty');
+        valueEl.textContent = '(add the open…)';
+    }
+
+    // Click to edit → swap in an input, save on blur/Enter, cancel on Escape.
+    valueEl.addEventListener('click', () => startHookEdit(item, section, valueEl));
+
+    fieldEl.appendChild(labelEl);
+    fieldEl.appendChild(valueEl);
+    return fieldEl;
+}
+
+/* Click-to-edit for the HOOK field. */
+function startHookEdit(item, section, valueEl) {
+    if (valueEl.querySelector('input')) return; // already editing
+    const originalValue = (item.hook || '');
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'inline-edit inline-edit-hook';
+    input.value = originalValue;
+    input.placeholder = 'The open — one line…';
+    input.setAttribute('aria-label', `Hook for ${item.title || item.url}`);
+
+    valueEl.textContent = '';
+    valueEl.classList.remove('item-hook-empty');
+    valueEl.appendChild(input);
+    input.focus();
+    input.select();
+
+    let cancelled = false;
+
+    const doSave = async () => {
+        if (cancelled) return;
+        const newValue = input.value.trim();
+        valueEl.textContent = newValue;
+        valueEl.classList.toggle('item-hook-empty', newValue === '');
+        if (!newValue) valueEl.textContent = '(add the open…)';
+        item.hook = newValue;
+        try {
+            await apiCall('update_hook', { id: item.id, hook: newValue });
+        } catch {
+            // error toast shown by apiCall
+        }
+    };
+
+    const debouncedSave = createDebounce(doSave, 650);
+    input.addEventListener('input', () => {
+        // Live-update the placeholder state as the user types.
+        valueEl.classList.toggle('item-hook-empty', input.value.trim() === '');
+    });
+    input.addEventListener('blur', debouncedSave);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            debouncedSave.cancel();
+            doSave();
+        } else if (e.key === 'Escape') {
+            cancelled = true;
+            debouncedSave.cancel();
+            input.remove();
+            const restored = originalValue;
+            valueEl.textContent = restored;
+            valueEl.classList.toggle('item-hook-empty', restored.trim() === '');
+            if (!restored) valueEl.textContent = '(add the open…)';
+        }
+    });
 }
 
 /* Builds a single labelled field within an item row. */
@@ -966,6 +1061,26 @@ const articleInputModal = (() => {
         metaRow.appendChild(authorField);
         metaRow.appendChild(authorUrlField);
 
+        // Hook (M7) — the one-line open, promoted into the presenter intro.
+        // Optional on entry; it can always be edited on the item card later.
+        const hookField = document.createElement('div');
+        hookField.className = 'aim-field';
+        const hookLabel = document.createElement('label');
+        hookLabel.setAttribute('for', 'aim-hook');
+        hookLabel.textContent = 'Hook';
+        const hookHint = document.createElement('span');
+        hookHint.className = 'aim-notes-hint';
+        hookHint.textContent = ' — one line for the open';
+        hookLabel.appendChild(hookHint);
+        const hookInput = document.createElement('input');
+        hookInput.type = 'text';
+        hookInput.id = 'aim-hook';
+        hookInput.autocomplete = 'off';
+        hookInput.placeholder = 'e.g. A $25 agent that quietly reads your whole codebase…';
+        hookField.classList.add('aim-field-hook'); /* M7 — tinted to match the card field */
+        hookField.appendChild(hookLabel);
+        hookField.appendChild(hookInput);
+
         // Notes area (visible only for News section)
         const notesArea = document.createElement('div');
         notesArea.className = 'aim-notes';
@@ -990,6 +1105,7 @@ const articleInputModal = (() => {
         body.appendChild(sectionField);
         body.appendChild(titleField);
         body.appendChild(metaRow);
+        body.appendChild(hookField);
         body.appendChild(notesArea);
 
         // --- Footer ---
@@ -1038,6 +1154,7 @@ const articleInputModal = (() => {
         backdropEl.querySelector('#aim-title-field').value = '';
         backdropEl.querySelector('#aim-author-name').value = '';
         backdropEl.querySelector('#aim-author-url').value = '';
+        backdropEl.querySelector('#aim-hook').value = '';
         backdropEl.querySelector('#aim-talking-points').value = '';
         if (!preserveSection) {
             backdropEl.querySelector('#aim-section').value = 'news';
@@ -1202,6 +1319,7 @@ const articleInputModal = (() => {
         const titleVal   = backdropEl.querySelector('#aim-title-field').value.trim();
         const authorName = backdropEl.querySelector('#aim-author-name').value.trim();
         const authorUrl  = backdropEl.querySelector('#aim-author-url').value.trim();
+        const hookVal    = backdropEl.querySelector('#aim-hook').value.trim();
         const talkingPoints = backdropEl.querySelector('#aim-talking-points').value.trim();
 
         const payload = {
@@ -1211,6 +1329,12 @@ const articleInputModal = (() => {
             author_name: authorName,
             author_url: authorUrl,
         };
+
+        // M7 — carry the hook at creation time, then it is edited on the
+        // item card (update_hook) from there on.
+        if (hookVal !== '') {
+            payload.hook = hookVal;
+        }
 
         // Only include talking_points for news section when there is content
         if (section === 'news' && talkingPoints) {
@@ -2455,7 +2579,18 @@ const recordingModule = (() => {
             .filter(item => item.parent_id === null)
             .sort((a, b) => a.sort_order - b.sort_order);
 
+        // M7 — collect the episode's filled hooks (run order = vuln then news).
+        const hooks = [
+            ...vulnItems.filter(i => (i.hook || '').trim()),
+            ...newsItems.filter(i => (i.hook || '').trim()),
+        ].map(i => ({ id: i.id, title: i.title, hook: i.hook.trim() }));
+
         const order = [];
+
+        // M7 — the show intro: first stop of every episode. The host opens with
+        // "This week we'll cover…" reading the hooks; the audience screen shows
+        // the title, week and the same list on the intro card (loaded server-side).
+        order.push({ type: 'intro', hooks });
 
         for (const item of vulnItems) {
             order.push({ type: 'item', item, segment: 'vulnerability' });
@@ -2520,16 +2655,29 @@ const recordingModule = (() => {
         currentIndex = index;
         const entry  = runOrder[index];
         renderHostView(entry);
-        if (entry.type === 'item' && audienceWindow && !audienceWindow.closed) {
-            if (!isNavigableUrl(entry.item.url)) {
-                console.warn('[recording] Blocked navigation to unsafe URL:', entry.item.url);
-                return;
-            }
+
+        if (!audienceWindow || audienceWindow.closed) return;
+
+        // M7 — the intro drives the audience to the intro card (title, week,
+        // "this week we cover" list), which reads the live DB server-side.
+        if (entry.type === 'intro') {
             try {
-                audienceWindow.location.href = entry.item.url;
+                audienceWindow.location.href = '/intro.php';
             } catch (e) {
-                console.error('[recording] Failed to navigate audience window:', e);
+                console.error('[recording] Failed to open intro card:', e);
             }
+            return;
+        }
+
+        if (entry.type !== 'item') return;
+        if (!isNavigableUrl(entry.item.url)) {
+            console.warn('[recording] Blocked navigation to unsafe URL:', entry.item.url);
+            return;
+        }
+        try {
+            audienceWindow.location.href = entry.item.url;
+        } catch (e) {
+            console.error('[recording] Failed to navigate audience window:', e);
         }
     }
 
@@ -2565,15 +2713,27 @@ const recordingModule = (() => {
         const hostView      = document.getElementById('host-view');
         const contentEl     = hostView.querySelector('.hv-content');
         const segBreakEl    = hostView.querySelector('.hv-segment-break');
+        const introEl       = hostView.querySelector('.hv-intro');
         const counterEl     = hostView.querySelector('.hv-nav-counter');
         const prevBtn       = hostView.querySelector('#hv-btn-prev');
         const nextBtn       = hostView.querySelector('#hv-btn-next');
         const totalItems    = runOrder.filter(e => e.type === 'item').length;
 
+        const hideAll = () => {
+            contentEl.style.display  = 'none';
+            segBreakEl.style.display = 'none';
+            if (introEl) introEl.style.display = 'none';
+        };
+
         if (entry.type === 'segment_break') {
             counterEl.textContent    = 'Segment break';
-            contentEl.style.display  = 'none';
+            hideAll();
             segBreakEl.style.display = 'flex';
+        } else if (entry.type === 'intro') {
+            counterEl.textContent    = 'Intro';
+            hideAll();
+            introEl.style.display = 'flex';
+            renderIntro(entry);
         } else {
             // Count how many item entries we have reached (1-indexed)
             let itemNumber = 0;
@@ -2584,12 +2744,23 @@ const recordingModule = (() => {
 
             contentEl.style.display  = '';
             segBreakEl.style.display = 'none';
+            if (introEl) introEl.style.display = 'none';
 
             const item = entry.item;
             contentEl.querySelector('.hv-segment-label').textContent =
                 (entry.segment || '').toUpperCase();
             contentEl.querySelector('.hv-title').textContent  = item.title || '';
             contentEl.querySelector('.hv-url').textContent    = item.url   || '';
+
+            /* M7 — surface the story's hook (the open) in the host view. */
+            const hookEl = contentEl.querySelector('.hv-hook');
+            const hookText = (item.hook || '').trim();
+            if (hookText !== '') {
+                hookEl.style.display = 'flex';
+                hookEl.querySelector('.hv-hook__text').textContent = hookText;
+            } else {
+                hookEl.style.display = 'none';
+            }
 
             const tpContainer = contentEl.querySelector('.hv-talking-points');
             const points = item.talking_points
@@ -2612,6 +2783,51 @@ const recordingModule = (() => {
 
         if (prevBtn) prevBtn.disabled = currentIndex === 0;
         if (nextBtn) nextBtn.disabled = currentIndex === runOrder.length - 1;
+    }
+
+    /* M7 — Render the show intro (host view).
+       Fills the title, week and the filled "this week we cover" hook list.
+       The audience intro card is generated server-side from the same data. */
+    function renderIntro(entry) {
+        const hostView = document.getElementById('host-view');
+        if (!hostView) return;
+        const introEl  = hostView.querySelector('.hv-intro');
+        if (!introEl)  return;
+
+        const ep   = state.episode || {};
+        const cfg  = state.config  || {};
+
+        introEl.querySelector('.hv-intro__title').textContent =
+            cfg.show_title || 'Cozy News Corner';
+        introEl.querySelector('.hv-intro__week').textContent =
+            (ep.week_number && ep.year) ? `Week ${ep.week_number} of ${ep.year}` : '';
+
+        const ul    = introEl.querySelector('.hv-intro__hooks');
+        const hooks = entry.hooks || [];
+        ul.textContent = '';
+
+        if (hooks.length === 0) {
+            const li  = document.createElement('li');
+            li.className = 'hv-intro__hooks-empty';
+            li.textContent = 'No hooks yet — set each story\u2019s open in the prep view.';
+            ul.appendChild(li);
+            return;
+        }
+
+        for (const h of hooks) {
+            const li    = document.createElement('li');
+            const span  = document.createElement('span');
+            span.textContent = h.hook;
+            li.appendChild(span);
+            if (h.title && h.title.trim() !== '') {
+                const t = document.createElement('span');
+                t.className = 'hv-intro__hook-title';
+                t.textContent = h.title;
+                t.title = h.title;
+                li.appendChild(t);
+            }
+            ul.appendChild(li);
+        }
     }
 
     /* ---- Audience window status indicator ---- */
@@ -2652,15 +2868,23 @@ const recordingModule = (() => {
                 <div class="hv-segment-label" aria-label="Section"></div>
                 <h2 class="hv-title"></h2>
                 <div class="hv-url"></div>
+                <div class="hv-hook" style="display:none"><span class="hv-hook__label">OPEN</span><span class="hv-hook__text"></span></div>
                 <div class="hv-talking-points"><ul></ul></div>
+            </div>
+            <div class="hv-intro" style="display:none">
+                <div class="hv-intro__label">SHOW INTRO</div>
+                <h2 class="hv-intro__title"></h2>
+                <div class="hv-intro__week"></div>
+                <div class="hv-intro__lead">This week we&rsquo;ll cover&hellip;</div>
+                <ul class="hv-intro__hooks"></ul>
             </div>
             <div class="hv-segment-break" style="display:none">
                 <div class="hv-segment-break__word" aria-label="Segment break: News">NEWS</div>
-                <div class="hv-segment-break__hint">← press Next to continue →</div>
+                <div class="hv-segment-break__hint">&larr; press Next to continue &rarr;</div>
             </div>
             <div class="hv-nav-bar">
-                <button class="hv-nav-btn" id="hv-btn-prev" type="button">← Prev</button>
-                <button class="hv-nav-btn" id="hv-btn-next" type="button">Next →</button>
+                <button class="hv-nav-btn" id="hv-btn-prev" type="button">&larr; Prev</button>
+                <button class="hv-nav-btn" id="hv-btn-next" type="button">Next &rarr;</button>
             </div>
         `;
 
