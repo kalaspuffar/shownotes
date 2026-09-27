@@ -524,6 +524,7 @@ function handleAddItem(array $body, Database $db): array
     $authorName    = $body['author_name'] ?? '';
     $authorUrl     = $body['author_url'] ?? '';
     $rawPoints     = $body['talking_points'] ?? '';
+    $rawHook       = $body['hook'] ?? null;
 
     if (!in_array($section, $allowedSections, true)) {
         return jsonError('section must be "vulnerability" or "news"');
@@ -543,7 +544,10 @@ function handleAddItem(array $body, Database $db): array
         $talkingPoints = '';
     }
 
-    $item = $db->addItem($section, $url, (string) $title, (string) $authorName, (string) $authorUrl, $talkingPoints);
+    // M7 — optional per-story hook at creation time.
+    $hookPass = (is_string($rawHook) && $rawHook !== '') ? $rawHook : null;
+
+    $item = $db->addItem($section, $url, (string) $title, (string) $authorName, (string) $authorUrl, $talkingPoints, $hookPass);
 
     if ($authorName !== '') {
         $domain = extractDomain($url);
@@ -700,10 +704,40 @@ function handleGenerateMarkdown(Database $db, array $config): array
     return jsonSuccess($data);
 }
 
+/*
+ * M7 — set the per-story hook on an item.
+ *
+ * A single-field write: `hook` replaces the previous value (empty string
+ * clears it). It is surfaced in the presenter intro, the "This week we
+ * cover" list and the audience intro card — it does NOT go into the
+ * generated Markdown, so show notes are unaffected.
+ */
+function handleUpdateHook(array $body, Database $db): array
+{
+    $id = filter_var($body['id'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($id === false || $id === null || $id <= 0) {
+        return jsonError('id must be a positive integer');
+    }
+
+    if (!array_key_exists('hook', $body) || !is_string($body['hook'])) {
+        return jsonError('hook must be a string');
+    }
+
+    $hook = $body['hook'];
+
+    $item = $db->updateHook($id, $hook);
+
+    if ($item === false) {
+        return jsonError('No item with that id', 404);
+    }
+
+    return jsonSuccess(['item' => $item]);
+}
+
 function handleUpdateTalkingPoints(array $body, Database $db): array
 {
     $itemId = filter_var($body['itemId'] ?? null, FILTER_VALIDATE_INT);
-
     if ($itemId === false || $itemId === null || $itemId <= 0) {
         return jsonError('itemId must be a positive integer');
     }

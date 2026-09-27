@@ -316,6 +316,9 @@ M6 — attribution rules:
     credited report reads the same in both sections;
   - secondaries attach to the story block above them (no blank line
     between a primary and its own secondaries).
+
+M7 — `hook` ("the open") is a PRESENTER/RESEARCH field only: it is never
+  emitted in the generated Markdown. The generator must ignore it.
 ```
 
 **Implementation Notes:**
@@ -700,6 +703,7 @@ CREATE TABLE IF NOT EXISTS items (
     sort_order  INTEGER NOT NULL DEFAULT 0,
     status      TEXT    NOT NULL DEFAULT '',   -- M4: workflow status (automation)
     my_context  TEXT    NOT NULL DEFAULT '',   -- M4: research context (automation)
+    hook        TEXT,                          -- M7: per-story "the open" (nullable; NULL = unset)
     parent_id   INTEGER                          -- NULL = top-level; else the
                                                 -- id of the primary it is a
                                                 -- corroborating secondary of
@@ -749,6 +753,7 @@ CREATE INDEX IF NOT EXISTS idx_candidates_url ON candidates (url);
 **Notes:**
 - `strftime('%W', 'now')` in SQLite returns 0-padded ISO week. PHP should use `idate('W')` to insert the correct ISO week on first PHP-side initialisation rather than relying on SQLite's strftime.
 - The schema SQL above is used for the SQLite initialisation seed; PHP's `Database::init()` runs these statements on every connection open via `CREATE TABLE IF NOT EXISTS`.
+- M7 adds `hook` via a guarded migration (`ALTER TABLE items ADD COLUMN hook TEXT` inside a try/catch — same pattern as `talking_points`/`parent_id`/M4 columns). It is nullable and behaves exactly like `talking_points`: the ordered list reads (`fetchVulnerabilityItems`/`fetchNewsItemsOrdered`) COALESCE it to `''` so the two prep lists and `INITIAL_STATE` always carry a string, while single-row by-id reads (write-confirmation responses, `getItemById`) return the stored value as-is (NULL when unset). `''`/whitespace-only is treated as "no hook": `updateHook()` and `addItem()` trim and store NULL for empty values.
 
 ---
 
@@ -868,6 +873,7 @@ HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only 
 - `section`: must be `vulnerability` or `news`
 - `url`: non-empty string
 - `title`, `author_name`, `author_url`: strings (may be empty)
+- `hook` (M7): optional string — the one-line "open" for the story. Omitted or empty → stored NULL; leading/trailing whitespace trimmed.
 
 **Response (success):**
 ```json
@@ -1321,6 +1327,39 @@ GET /api.php?action=list_candidates
 **Notes:**
 - `list_items`, `get_episode`, and the page's `INITIAL_STATE` all include `status` + `my_context` (both default to `""`).
 - `my_context` multi-line input is line-split; each trimmed non-empty line becomes one blockquote line in the Markdown (see §3.4 generation rules, M4 note).
+
+---
+
+### 5.19 Action: `update_hook` (write, M7)
+
+**Description:** Sets (or clears) the per-story hook — the one-line "open" Daniel writes while researching (it is the `**Hook**` line from the research-brief template). Displayed in the prep view (click-to-edit on the item card, debounced auto-save), the presenter intro ("This week we'll cover…" list), and the audience intro card. It is a presenter/research field: it is **never** included in the generated Markdown.
+
+**Request:**
+```json
+{
+  "action": "update_hook",
+  "id": 7,
+  "hook": "A $25 agent that quietly reads your whole codebase"
+}
+```
+
+**Validation:**
+- `id`: integer, must exist in `items` (else `404`)
+- `hook`: required string; `""` (or whitespace only) clears the hook. Stored value is trimmed; empty → NULL.
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": { "item": { "id": 7, "section": "news", "url": "...", "title": "...", "hook": "A $25 agent that quietly reads your whole codebase", ... } }
+}
+```
+
+**Notes:**
+- `hook` is present (as `""` or the stored string) on every item read: `add_item`, `update_item`, `list_items`, `get_episode`, `nest_item`/`extract_item`/`reorder_*` item arrays, and the page's `INITIAL_STATE`.
+- Secondaries (items with `parent_id != NULL`) may carry a hook value, but the presenter intro and the audience intro card list only top-level items (hook belongs to the story the host opens — the primary).
+- `add_item` also accepts an optional initial `hook` (see §5.3).
+- `reset_episode` deletes the items and therefore their hooks with them; the column itself persists.
 
 ---
 
