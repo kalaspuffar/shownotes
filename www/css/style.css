@@ -1992,3 +1992,210 @@ body.recording-mode #host-view {
     }
 }
 
+
+/* ============================================================
+   M8 — Reorder mode (body.reorder-mode)
+   Focused list-ordering view: each story collapses to exactly one
+   title row (standalone items) or one group row (primary + hidden
+   secondaries), so an episode fits on one screen and can be dragged
+   into show order. Purely visual — the DOM (data-id / data-primary-id)
+   stays identical, so the existing DnD core and reorder_items /
+   reorder_group state updates work unchanged. Nest / extract are
+   suppressed in JS (reorderMode flag) because the drop targets
+   (.item-row / .story-group) are still present but hidden.
+   ============================================================ */
+
+/* Header toggle: [x] Reorder */
+.reorder-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 4px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+    padding: 4px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 100px;
+    background-color: var(--color-bg);
+    transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+.reorder-toggle:hover {
+    background-color: rgba(74, 124, 89, 0.10);
+    color: var(--color-primary-dark);
+}
+.reorder-toggle input[type="checkbox"] {
+    margin: 0;
+    width: 15px;
+    height: 15px;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+}
+/* Checked state mirrors the active mode in the header */
+.reorder-toggle:has(input:checked) {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary-dark);
+    color: #fff;
+}
+.reorder-toggle:has(input:checked):hover {
+    background-color: var(--color-primary-dark);
+}
+.reorder-toggle:has(input:focus-visible) {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* ── Compact canvas ──
+   Tighten spacing a little so more rows fit per viewport. */
+body.reorder-mode #item-lists {
+    gap: var(--spacing-md);
+}
+
+body.reorder-mode #vulnerability-list,
+body.reorder-mode #news-list {
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+body.reorder-mode #vulnerability-list h2,
+body.reorder-mode #news-list h2 {
+    margin-bottom: 8px;
+    opacity: 0.75;
+}
+
+/* Hide the candidate pool — reordering the live episode, not sorting the
+   pool of automation-offered stories. (The checkbox is offscreen-safe:
+   the pool stays in the DOM; leaving mode restores it.) */
+body.reorder-mode #candidate-pool {
+    display: none;
+}
+
+/* ── Collapse every item row to its title ──
+   .item-fields holds the standard fields (title, url, author, hook).
+   In reorder mode we keep only the title field visible: every other
+   child of .item-fields is hidden (they all carry data-field, the
+   title field keeps its own), its label is hidden, and the value goes
+   up a size. Other direct row children (.item-context, the talking
+   points panel, action buttons) are hidden by their own rules below.
+   The result per row: [⠿ handle] [Title text] — nothing else. */
+body.reorder-mode .item-row {
+    flex-wrap: nowrap;
+    align-items: center;
+    padding: 6px var(--spacing-md);
+    gap: var(--spacing-sm);
+    cursor: default;
+}
+
+body.reorder-mode .item-row .item-fields > :not([data-field="title"]) {
+    display: none;
+}
+/* The "Title:" label is noise in the compact view — the title text is
+   self-evident. */
+body.reorder-mode .item-row .item-field[data-field="title"] .item-field-label {
+    display: none;
+}
+/* Title value: slightly larger so the row reads as a list. */
+body.reorder-mode .item-row .item-field[data-field="title"] .item-field-value {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+/* Research-context block (M4) — a direct child of .item-row, outside
+   .item-fields, so it needs its own hide rule. */
+body.reorder-mode .item-row .item-context {
+    display: none;
+}
+
+/* Talking-points panel — a direct child of .item-row on standalone news
+   items (and of the primary wrapper inside groups). Hide explicitly;
+   it is outside .item-fields. */
+body.reorder-mode .item-row .talking-points-panel,
+body.reorder-mode .story-group__primary > .talking-points-panel {
+    display: none;
+}
+
+/* Delete button + "↩ Pool" + any action cluster: hidden. They are direct
+   row children, not inside .item-fields. */
+body.reorder-mode .item-row .item-delete,
+body.reorder-mode .item-row .item-back-to-pool,
+body.reorder-mode .item-row .item-actions {
+    display: none;
+}
+
+/* Secondary rows (inside .story-group__secondaries) are hidden entirely —
+   in reorder mode the group IS the story. */
+body.reorder-mode .story-group__secondaries {
+    display: none;
+}
+
+/* Group-level chrome: flatten the group's left-border + tint so in a
+   tight list it reads the same as a standalone row. The group drag
+   handle is the grab affordance. */
+body.reorder-mode .story-group {
+    background: var(--color-surface);
+    border-left: 0;
+    padding: 0;
+    margin: 0 0 var(--spacing-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    cursor: grab;
+}
+/* The primary row inside the group is a nested .item-row — flatten its
+   own border/padding so it reads as one continuous compact row, not a
+   card-in-a-card. */
+body.reorder-mode .story-group .story-group__primary {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+}
+body.reorder-mode .story-group .story-group__primary .item-row {
+    flex: 1 1 auto;
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+    padding: 6px var(--spacing-sm);
+    margin: 0;
+    border-radius: 0;
+}
+/* The PRIMARY badge is the one disambiguator worth keeping in the
+   compact list (distinguishes "the story you talk about" from a lone
+   standalone article). */
+body.reorder-mode .story-group .story-group__primary-badge {
+    flex-shrink: 0;
+}
+/* Secondary badge never rendered (secondaries are hidden in this mode). */
+body.reorder-mode .story-group__secondary-badge {
+    display: none;
+}
+
+/* Drag handle on collapsed rows: keep it, it's the grab affordance.
+   Slightly larger hit area, consistent with the rest. */
+body.reorder-mode .item-row .drag-handle,
+body.reorder-mode .story-group__drag-handle {
+    flex-shrink: 0;
+    cursor: grab;
+}
+
+/* Inert editing: no clicks on collapsed text (URLs, author…) should
+   trigger inline-edit, new tabs, or copy. The elements are
+   display:none already via the field-hide rules, but the title value
+   is visible — keep it non-interactive. */
+body.reorder-mode .item-row .item-field[data-field="title"] {
+    pointer-events: none;
+}
+
+/* Drop indicator: a clear, visible gap where the story will land.
+   Same colour family as a story row so it reads as "a row goes here". */
+body.reorder-mode .drop-indicator {
+    height: 4px;
+    margin: 2px var(--spacing-sm);
+    border-radius: 2px;
+    background: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(74, 124, 89, 0.25);
+}

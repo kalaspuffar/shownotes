@@ -31,6 +31,13 @@ let dragSourceSection = null;
 // to reorder_group instead of letting them bubble up to extract_item.
 let dragSourceParentId = null;
 
+/* M8 — Reorder mode (focus mode): the prep view collapses to one
+   title-per-story row for fast, one-screen reordering. True while
+   <body> carries .reorder-mode. In this mode the section DnD suppresses
+   nest/extract targets so every drop is a pure top-level reorder, and
+   item drags stay inert in the collapsed DOM (see reorderModeModule). */
+let reorderMode = false;
+
 /* ----------------------------------------------------------
    10.2 — apiCall(action, payload)
    Single AJAX boundary for all server communication.
@@ -1827,7 +1834,8 @@ function bindDragAndDrop(containerId, section) {
         const topLevel = getTopLevelDraggables();
 
         // --- News section: detect drop-on center zone for nesting ---
-        if (section === 'news') {
+        // M8 — reorder mode: nest zones are off; every drop is a reorder.
+        if (section === 'news' && !reorderMode) {
             // Both standalone .item-row and .story-group containers can be nest targets.
             // Merge and sort into DOM order so hit-testing is position-accurate.
             const nestCandidates = [
@@ -1914,7 +1922,10 @@ function bindDragAndDrop(containerId, section) {
         // Within-group reorders are intercepted by the group's own drop listener
         // (which calls e.stopPropagation()), so this branch only fires when the
         // secondary is dragged to a position outside its parent group.
-        if (section === 'news' && draggedItem && draggedItem.parent_id !== null) {
+        // M8 — reorder mode: secondaries are collapsed and not draggable, so
+        // this can't fire; the guard is defensive so a stray drag can never
+        // demote/promote structure during a reorder.
+        if (section === 'news' && !reorderMode && draggedItem && draggedItem.parent_id !== null) {
             const topLevel        = getTopLevelDraggables();
             const topLevelIds     = topLevel.map(el => getDraggableId(el));
             const insertIdx       = insertBefore ? topLevel.indexOf(insertBefore) : -1;
@@ -2469,6 +2480,107 @@ const storyGroupModule = (() => {
     // Only renderNewsSection is part of the public API (spec §3.4).
     // renderGroupContainer and renderSecondaryItem are internal helpers.
     return { renderNewsSection };
+})();
+
+/* ----------------------------------------------------------
+   M8 — Reorder mode (focus mode)
+   One checkbox in the header collapses the prep view to exactly
+   one title-per-story row (groups included), so an episode of ~10
+   stories fits on one screen and can be dragged into the show order
+   quickly. Purely visual: the DOM keeps .item-row[data-id] and
+   .story-group[data-primary-id] intact, so the existing DnD core
+   (reorder_items for top levels, reorder_group within groups) and
+   the reorder state-update code work unchanged on drop.
+   While active:
+   - .item fields, context, talking points, badges, action buttons and
+     secondaries are collapsed via .reorder-mode CSS (see style.css);
+   - inline editing is inert (CSS pointer-events + a capture-phase
+     dragstart guard that aborts any accidental item-row drag);
+   - the section DnD suppresses nest/extract targets (see
+     bindDragAndDrop) so a drop can never change structure.
+   ---------------------------------------------------------- */
+const reorderModeModule = (() => {
+    /** Builds the header checkbox: [x] Reorder. */
+    function buildControl() {
+        const label = document.createElement('label');
+        label.className = 'reorder-toggle';
+        label.title = 'Focused reorder mode — one title per story, drag to reorder';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = 'reorder-mode-toggle';
+        input.checked = false;
+        input.setAttribute('aria-label', 'Reorder mode (collapse to titles only)');
+        input.addEventListener('change', () => setMode(input.checked));
+
+        const text = document.createElement('span');
+        text.textContent = 'Reorder';
+
+        label.appendChild(input);
+        label.appendChild(text);
+        return label;
+    }
+
+    /** Enters or leaves reorder mode. Idempotent on repeat calls. */
+    function setMode(on) {
+        if (on === reorderMode) return;
+        reorderMode = Boolean(on);
+        document.body.classList.toggle('reorder-mode', reorderMode);
+        showToast('success', reorderMode
+            ? 'Reorder mode — drag stories into the show order. (uncheck to edit)'
+            : 'Edit mode restored.');
+    }
+
+    /* In this mode the valid drag sources are:
+       - .story-group containers (group handle → whole-story drag), and
+       - standalone .item-row items (row handle → reorder_items).
+       Two defensive capture-phase cancels, before the element's own
+       dragstart handlers:
+       1. rows inside .story-group__secondaries — collapsed, must not
+          drag (display:none already prevents it; belt and braces);
+       2. the top-level row inside a group (e.target within an ancestor
+          .story-group) — if it started as a row drag, the section DnD
+          could not resolve the group container and might no-op or nest;
+          suppressing here leaves only the group handle as trigger.
+       Cancelling dragstart kills the whole drag — no drop, no mutation. */
+    let inertGuardBound = false;
+    function bindInertDragGuard() {
+        if (inertGuardBound) return;
+        const lists = document.getElementById('item-lists');
+        if (!lists) return;
+        inertGuardBound = true;
+        lists.addEventListener('dragstart', (e) => {
+            if (!reorderMode) return;
+            const target = e.target;
+            if (!target || !target.closest) return;
+            const row = target.closest('.item-row');
+            if (!row) return;
+            if (row.closest('.story-group__secondaries')) {
+                e.preventDefault();  // collapsed secondary: never draggable
+            } else if (row.closest('.story-group')) {
+                // Top-level (primary) row inside its own group: only the
+                // group handle (event on the .story-group itself) should
+                // start the drag. A drag starting inside a collapsed row
+                // would bypass the group — suppress it.
+                e.preventDefault();
+            }
+        }, true);  // capture phase: runs before the handle's own handler
+    }
+
+    /* Places the checkbox in the header (after #status-indicator) and
+       wires the guard. Called once on DOMContentLoaded. */
+    function init() {
+        const anchor = document.getElementById('status-indicator');
+        if (anchor) {
+            anchor.insertAdjacentElement('afterend', buildControl());
+        } else {
+            const header = document.getElementById('app-top');
+            if (header) header.appendChild(buildControl());
+        }
+        bindInertDragGuard();
+    }
+
+    return { init, setMode };
 })();
 
 /* ----------------------------------------------------------
@@ -3031,6 +3143,12 @@ document.addEventListener('DOMContentLoaded', () => {
     bindDragAndDrop('news-list', 'news');
     bindGenerateButton();
     bindNewEpisodeButton();
+
+    /* M8 — Reorder mode: place the header checkbox + the inert-drag guard.
+       init() is idempotent and reads #status-indicator / #app-top, which
+       exist in the static header — safe to call before/after the other
+       binds. It does not touch the DnD (reorder-mode suppresses nest). */
+    reorderModeModule.init();
 
     // Wire "Start Recording" button to recordingModule
     const btnStartRecording = document.getElementById('btn-start-recording');

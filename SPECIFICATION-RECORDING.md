@@ -23,6 +23,7 @@
 8. [Audience View](#8-audience-view)
 9. [Story Groups — Prep UI](#9-story-groups--prep-ui)
 10. [Talking Points — Prep UI](#10-talking-points--prep-ui)
+10a. [Reorder Mode — Prep UI (Focus Mode)](#10a-reorder-mode--prep-ui-focus-mode)
 11. [Security Architecture](#11-security-architecture)
 12. [Testing Strategy](#12-testing-strategy)
 13. [Implementation Plan](#13-implementation-plan)
@@ -2104,6 +2105,101 @@ In the Host View, talking points are rendered as a read-only `<ul>` from the cur
 **Empty-bullet placeholder:** When a `<li>` is empty, display a `data-placeholder` attribute value of "Add a talking point…" in muted color via CSS `::before` pseudo-element. This placeholder disappears on focus (use `:focus::before { display: none }`).
 
 **Auto-save feedback:** No explicit "Saved" indicator for talking points — the 800 ms auto-save is silent to avoid disrupting the host during prep. Any API error is surfaced as an existing toast notification.
+
+---
+
+## 10a. Reorder Mode — Prep UI (Focus Mode)
+
+### 10a.1 Purpose
+
+Reordering an episode while every card is fully expanded (fields, research
+context, talking points, secondaries, badges) is visually noisy and pushes
+stories off the screen. Reorder mode is a checkbox-driven, purely visual
+collapse that turns the prep view into a one-title-per-story list so a
+~10–15 story episode fits on one screen and can be dragged into show order
+quickly. It complements the M7 intro: once the hooks are filled, the episode
+order is what the audience will first hear.
+
+### 10a.2 UI
+
+- A single `[x] Reorder` checkbox in the app header (next to the save
+  status indicator), built by `reorderModeModule.init()` on
+  `DOMContentLoaded`. Checked state is styled (filled) and shows a toast on
+  enter/exit.
+- Unchecking (or reloading the page) restores the standard edit view.
+  The mode is not persisted — it is a per-session focus aid.
+
+### 10a.3 Visual collapse (CSS only, `body.reorder-mode`)
+
+Per `.item-row` in either section and inside a group:
+
+- The standard (URL/Author/Author URL) and appended (hook, context, etc.)
+  fields are hidden one-for-one. Only the title field is visible; its
+  label is hidden, and its value is one size larger.
+- The research-context block (M4), the talking points panel, the delete
+  button, the "↩ Pool" button, and any other action buttons are hidden.
+- Inline editing on the visible title is inert (pointer events disabled).
+- `.story-group__secondaries` is hidden wholesale — the group reads as one
+  row in the list. The "PRIMARY" badge stays as a disambiguator; the
+  "SECONDARY" badge never renders in this mode.
+- The `.story-group` container flattens (same surface, no tint/large border,
+  same padding rhythm as a standalone row) so the list reads uniformly.
+- The candidate pool section is hidden (pool management belongs to the
+  curation workflow, not the show-order workflow).
+- The drop indicator is restyled as a thick accent bar — reads clearly as
+  "a story lands here".
+
+No DOM changes are required; the collapse is entirely CSS + one `body`
+class. `reorderModeModule` toggles the class on `document.body`.
+
+### 10a.4 Interaction (reorders only)
+
+Drag-and-drop behaviour in this mode is restricted to pure top-level
+reordering of each section:
+
+- **Drag sources** — `.story-group` containers (only their own group-level
+  handle) and standalone `.item-row` items (their own row handle).
+  Secondary rows and top-level rows inside a group are inert: a
+  capture-phase `dragstart` guard on `#item-lists` cancels them, so there
+  is no way to accidentally promote/demote or split a story while
+  reordering.
+- **Drop zones** — the nest-on-a-story center zone (`ratio 0.25–0.75`)
+  is disabled when `reorderMode === true`, and the secondary-extract
+  branch in the container `drop` handler is skipped for the same reason.
+  Every valid drop therefore produces a `reorder_items` call (or the
+  no-op `reorder_group` for within-group drops, which the group's own
+  listener already handled).
+- **Keyboard** — unchanged from the standard drag flow (no new keys).
+- **State updates on drop** — the existing `reorder_items` + state
+  rebuild path in `bindDragAndDrop` is reused verbatim; nothing is
+  restructured, nothing is deleted.
+
+### 10a.5 Boundaries
+
+- Cross-section drags are still rejected (existing guard).
+- `delete_item`, `nest_item`, `extract_item`, `reset_episode`, and the
+  candidate-pool actions remain available in the standard edit view; they
+  are hidden from view (not disabled server-side) in reorder mode.
+- Reorder mode has no effect on the host view, the audience window, or
+  generation. It is a preparation aid.
+- The reorder order is the run-order the presenter view will use, so
+  finishing in this mode is the last UI step before "Start Recording".
+
+### 10a.6 Acceptance
+
+| Criterion | Check |
+|-----------|-------|
+| Toggle appears in header on load | `.reorder-toggle` exists after `DOMContentLoaded` |
+| Body carries `.reorder-mode` after check | `document.body.classList.contains('reorder-mode')` |
+| Toggle off restores body | class removed |
+| Secondary-row drag canceled in mode | `dispatchEvent('dragstart')` returns `false` for a collapsed row inside `.story-group__secondaries` |
+| Standalone-row drag allowed in mode | `dispatchEvent('dragstart')` returns `true` for a top-level `.item-row` |
+| Group-handle drag allowed in mode | same for a `.story-group__drag-handle` |
+| Top-level (primary) row inside a group canceled | same as item (1) |
+| Secondary-row drag allowed outside mode | same for a collapsed row when the class is off |
+| Nest-zone disabled in mode | DnD branch reads `section === 'news' && !reorderMode` |
+| Extract branch disabled in mode | DnD branch reads `!reorderMode` for the news item drag |
+| No DOM changes in either mode | `querySelectorAll('.item-row').length` unchanged across toggle |
 
 ---
 
