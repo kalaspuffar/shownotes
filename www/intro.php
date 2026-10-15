@@ -20,7 +20,13 @@ $showTitle = htmlspecialchars($config['show_title'] ?? 'Cozy News Corner', ENT_Q
 $showTag   = htmlspecialchars($config['show_tagline'] ?? '', ENT_QUOTES, 'UTF-8');
 $week      = (int) ($ep['week_number'] ?? 0);
 $year      = (int) ($ep['year'] ?? (int) date('Y'));
-$weekLabel = $week > 0 ? ($week > 52 ? "Week $week of $year" : "Week $week, $year") : '';
+// M10 — free-form week_label is the display truth; "Week N" is the fallback.
+$freeLabel = trim((string) ($ep['week_label'] ?? ''));
+if ($freeLabel !== '') {
+    $weekLabel = $year > 0 ? "$freeLabel, $year" : $freeLabel;
+} else {
+    $weekLabel = $week > 0 ? ($week > 52 ? "Week $week of $year" : "Week $week, $year") : '';
+}
 
 function esc(string $s): string {
     return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');

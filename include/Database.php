@@ -59,10 +59,21 @@ class Database
             CREATE TABLE IF NOT EXISTS episodes (
                 id          INTEGER PRIMARY KEY CHECK (id = 1),
                 week_number INTEGER NOT NULL,
+                week_label  TEXT,
                 year        INTEGER NOT NULL,
                 youtube_url TEXT    NOT NULL DEFAULT ''
             )
         SQL);
+
+        // M10 — free-form week label ("40–41", "W40"). Nullable: existing rows
+        // keep NULL and render the "Week N" fallback. week_number stays NOT NULL
+        // so episodes remain sortable. Guarded for SQLite < 3.37 (no ADD COLUMN
+        // IF NOT EXISTS) — same pattern as the `items` migrations above.
+        try {
+            $this->pdo->exec('ALTER TABLE episodes ADD COLUMN week_label TEXT');
+        } catch (\PDOException $e) {
+            // Column already exists — safe to continue.
+        }
 
         $this->pdo->exec(<<<'SQL'
             CREATE TABLE IF NOT EXISTS items (
@@ -257,6 +268,7 @@ class Database
         return $stmt->fetch() ?: [
             'id'          => 1,
             'week_number' => idate('W'),
+            'week_label'  => null,
             'year'        => (int) date('Y'),
             'youtube_url' => '',
         ];
@@ -346,13 +358,27 @@ class Database
     // Write methods — used by api.php handlers
     // -------------------------------------------------------------------------
 
-    /** Updates episode metadata (week, year, YouTube URL); returns the updated row. */
-    public function updateEpisode(int $week, int $year, string $youtubeUrl): array
+    /**
+     * Updates episode metadata (week label, week number, year, YouTube URL);
+     * returns the updated row.
+     *
+     * M10 — $weekLabel is the free-form display label (e.g. "40–41" or "W40")
+     * and is the truth for how the episode is titled. A null/empty label stores
+     * NULL so the "Week N" fallback is rendered. $week stays the numeric
+     * sorting key; the API derives/keeps it (see handleUpdateEpisode).
+     */
+    public function updateEpisode(int $week, int $year, string $youtubeUrl, string $weekLabel = ''): array
     {
+        $label = trim($weekLabel);
         $stmt = $this->pdo->prepare(
-            'UPDATE episodes SET week_number = :week, year = :year, youtube_url = :url WHERE id = 1'
+            'UPDATE episodes SET week_number = :week, week_label = :label, year = :year, youtube_url = :url WHERE id = 1'
         );
-        $stmt->execute([':week' => $week, ':year' => $year, ':url' => $youtubeUrl]);
+        $stmt->execute([
+            ':week'  => $week,
+            ':label' => $label === '' ? null : $label,
+            ':year'  => $year,
+            ':url'   => $youtubeUrl,
+        ]);
 
         return $this->getEpisode();
     }
@@ -1027,7 +1053,10 @@ class Database
                 $ins->execute([
                     ':w'    => (int) $episode['week_number'],
                     ':y'    => (int) $episode['year'],
-                    ':wl'   => '',
+                    // M10 capture: freeze the free-form label at snapshot time
+                    // (the reset below deliberately clears it from the running
+                    // episode). '' when the label is NULL/unset (pre-M10 rows).
+                    ':wl'   => (string) ($episode['week_label'] ?? ''),
                     ':yu'   => (string) $episode['youtube_url'],
                     ':ic'   => $itemCount,
                     ':ij'   => json_encode($rows, JSON_UNESCAPED_SLASHES) ?: '[]',
@@ -1069,9 +1098,12 @@ class Database
                  WHERE url IN (SELECT url FROM covered_articles) AND status IN ('pending', 'selected')"
             );
 
-            // Reset the single running episode row to fresh defaults.
+            // M10 — also clear the free-form week label so a fresh episode
+            // starts from the numeric "Week N" fallback (does not inherit the
+            // previous episode's label). M9 — after the snapshot above has
+            // already captured it (see the archive INSERT).
             $upd = $this->pdo->prepare(
-                "UPDATE episodes SET week_number = :week, year = :year, youtube_url = '' WHERE id = 1"
+                "UPDATE episodes SET week_number = :week, week_label = NULL, year = :year, youtube_url = '' WHERE id = 1"
             );
             $upd->execute([':week' => idate('W'), ':year' => (int) date('Y')]);
 

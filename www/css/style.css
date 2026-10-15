@@ -165,7 +165,13 @@ main {
     background-color: var(--color-surface);
 }
 
-#ep-week,
+/* M10 — the Week field is a free-form label ("40–41", "W40"), so it needs more
+   room than a two-digit number. */
+#ep-week {
+    width: 150px;
+    max-width: 40vw;
+}
+
 #ep-year {
     width: 80px;
 }

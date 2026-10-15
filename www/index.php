@@ -25,7 +25,9 @@ $state = [
 $pageTitle        = htmlspecialchars($config['show_title'], ENT_QUOTES, 'UTF-8');
 $vulnLabel        = htmlspecialchars($config['sections']['vulnerability'], ENT_QUOTES, 'UTF-8');
 $newsLabel        = htmlspecialchars($config['sections']['news'], ENT_QUOTES, 'UTF-8');
-$epWeek           = (int) ($state['episode']['week_number'] ?? 1);
+// M10 — free-form week label (e.g. "40–41" or "W40"). Blank renders the
+// "Week N" fallback; week_number stays the numeric sort key behind it.
+$epWeekLabel      = (string) ($state['episode']['week_label'] ?? '');
 $epYear           = (int) ($state['episode']['year'] ?? date('Y'));
 $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT_QUOTES, 'UTF-8');
 
@@ -47,8 +49,10 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
     <section id="episode-meta" aria-label="Episode metadata">
         <div class="episode-meta-fields">
             <label for="ep-week">Week</label>
-            <input type="number" id="ep-week" name="week_number" min="1" max="53"
-                   value="<?= $epWeek ?>" aria-label="Week number">
+            <input type="text" id="ep-week" name="week_label"
+                   value="<?= htmlspecialchars($epWeekLabel, ENT_QUOTES, 'UTF-8') ?>"
+                   placeholder="40–41, W40" aria-label="Week label"
+                   title="Free-form week label (e.g. 40–41 or W40) — blank falls back to Week N">
 
             <label for="ep-year">Year</label>
             <input type="number" id="ep-year" name="year" min="2020"

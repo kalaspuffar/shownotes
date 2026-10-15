@@ -24,7 +24,7 @@ class MarkdownGenerator
      *     group, each carrying its own title, source URL and attribution.
      *     The primary's block stays the canonical story.
      *
-     * @param array $episode  Row from the `episodes` table (id, week_number, year, youtube_url)
+     * @param array $episode  Row from the `episodes` table (id, week_number, week_label, year, youtube_url)
      * @param array $items    Grouped items: ['vulnerability' => [...], 'news' => [...]]
      * @param array $config   Application config array (show_title, show_tagline, sections)
      */
@@ -33,7 +33,13 @@ class MarkdownGenerator
         $lines = [];
 
         // Document header
-        $lines[] = "# {$config['show_title']} for Week {$episode['week_number']} of {$episode['year']} - {$config['show_tagline']}";
+        // Document header — M10: the free-form week_label (e.g. "40–41", "W40")
+        // is the display truth; fall back to the numeric "Week N" when unset.
+        $weekPart = trim((string) ($episode['week_label'] ?? ''));
+        if ($weekPart === '') {
+            $weekPart = 'Week ' . $episode['week_number'];
+        }
+        $lines[] = "# {$config['show_title']} for {$weekPart} of {$episode['year']} - {$config['show_tagline']}";
         $lines[] = '';
         $lines[] = "[youtube {$episode['youtube_url']}]";
         $lines[] = '';

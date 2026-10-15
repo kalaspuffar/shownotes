@@ -187,7 +187,7 @@ function showConfirmDialog({ title, body, cancelLabel, confirmLabel }) {
    Syncs episode meta inputs from state.
    ---------------------------------------------------------- */
 function renderEpisodeMeta() {
-    document.getElementById('ep-week').value    = state.episode.week_number ?? '';
+    document.getElementById('ep-week').value    = state.episode.week_label ?? '';
     document.getElementById('ep-year').value    = state.episode.year        ?? '';
     document.getElementById('ep-youtube').value = state.episode.youtube_url ?? '';
 }
@@ -197,13 +197,15 @@ function renderEpisodeMeta() {
    ---------------------------------------------------------- */
 function bindEpisodeMetaListeners() {
     const saveEpisode = createDebounce(async () => {
-        const weekNumber = parseInt(document.getElementById('ep-week').value, 10);
+        // M10 — the week field is now a free-form label ("40–41" or "W40");
+        // the server derives the numeric sort key (week_number) from it.
+        const weekLabel  = document.getElementById('ep-week').value.trim();
         const year       = parseInt(document.getElementById('ep-year').value, 10);
         const youtubeUrl = document.getElementById('ep-youtube').value.trim();
 
         try {
             const data = await apiCall('update_episode', {
-                week_number: weekNumber,
+                week_label: weekLabel,
                 year,
                 youtube_url: youtubeUrl,
             });
@@ -2911,8 +2913,12 @@ const recordingModule = (() => {
 
         introEl.querySelector('.hv-intro__title').textContent =
             cfg.show_title || 'Cozy News Corner';
+        // M10 — free-form week_label is the display truth; "Week N" is the fallback.
+        const _weekLabel = String(ep.week_label || '').trim();
         introEl.querySelector('.hv-intro__week').textContent =
-            (ep.week_number && ep.year) ? `Week ${ep.week_number} of ${ep.year}` : '';
+            _weekLabel !== ''
+                ? _weekLabel + (ep.year ? `, ${ep.year}` : '')
+                : ((ep.week_number && ep.year) ? `Week ${ep.week_number} of ${ep.year}` : '');
 
         const ul    = introEl.querySelector('.hv-intro__hooks');
         const hooks = entry.hooks || [];
