@@ -1,6 +1,6 @@
 # Project Specification: Cozy News Corner — Show Notes Generator
 
-**Version:** 1.1 (M9 — episode archive & covered tracking)
+**Version:** 1.2 (M11 — browse old episodes + show-notes UI)
 **Date:** 2026-02-21
 **Author:** Solution Architect (Claude Code)
 **Status:** Draft — Pending Review
@@ -614,6 +614,30 @@ Events bound on each section list container:
 - Focus indicators meet WCAG AA contrast requirements (4.5:1 minimum)
 - Drag handles are visually distinct and obviously interactive
 - The Markdown output area uses a monospace font and is easily readable
+
+---
+
+### 3.9 Archive Pages — `www/episodes.php` + `www/episode.php` (M11)
+
+**Purpose:** Read-only browse UI over the M9 `episode_archive` table: see every finished episode and open any of them for its show notes.
+
+**Design principles (same as the rest of the app):**
+- Server-rendered PHP, no JavaScript app state — these pages are the "second monitor" read views, so they load instantly and never mutate data.
+- Both pages only READ from `episode_archive` (M11 adds no tables and no writes).
+- All stored text is emitted through `htmlspecialchars(…, ENT_QUOTES)` — archived titles/notes are external content and must render inert.
+
+**`www/episodes.php` — the browse list:**
+- One row per archived episode, **newest first** (`year DESC, iso_week DESC, id DESC`, the `idx_episode_archive_order` contract from §4.2).
+- Row contents: week (the archive's `week_label` verbatim when non-empty, else `Week {iso_week}`), year, story count (`item_count`, primaries only), archive date, and a link to `episode.php?id={id}`.
+- Empty state: a friendly "no past episodes yet" paragraph pointing at the "New Episode" finalise button (the archive fills itself — there is no manual "archive" action).
+
+**`www/episode.php?id={N}` — the per-episode view:**
+- Header: week + year, archive date, YouTube link (when `youtube_url` is non-empty), story count.
+- Story list: decoded from the lossless `items_json` snapshot, rendered in the show-notes shape — each primary as a block (title as the headline link, `By:` attribution only when an author exists, the raw URL, the stored research context as a quote, a section chip Vulnerability/News) and each secondary indented under it as an `Also:` line (same title→hostname fallback the Generator uses). An orphaned secondary (parent deleted before finalise) renders as a standalone block rather than being dropped.
+- Show-notes source: the archived `markdown` field verbatim in a `<pre>` with a one-line Copy button (the WordPress-ready text for that episode).
+- Idempotent and side-effect free; unknown `id` → `404`, missing/non-numeric `id` → `400` (both with a short body, so a mistyped link is readable).
+
+**Navigation:** the prep view header (`www/index.php`) carries a "Past episodes" link to `www/episodes.php`; both archive pages link back.
 
 ---
 
@@ -1401,6 +1425,82 @@ Restorable: `clearCoveredUrls([...])` removes a URL from `covered_articles` — 
 - Secondaries (items with `parent_id != NULL`) may carry a hook value, but the presenter intro and the audience intro card list only top-level items (hook belongs to the story the host opens — the primary).
 - `add_item` also accepts an optional initial `hook` (see §5.3).
 - `reset_episode` deletes the items and therefore their hooks with them; the column itself persists.
+
+---
+
+### 5.20 Action: `list_episodes` (read, M11)
+
+**Description:** Returns the finished-episode archive, newest first — the data behind the `www/episodes.php` browse list. Reads only.
+
+**Request:** `GET /api.php?action=list_episodes` (no parameters)
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "episodes": [
+      {
+        "id": 3,
+        "iso_week": 40,
+        "year": 2026,
+        "week_label": "",
+        "youtube_url": "https://www.youtube.com/watch?v=…",
+        "item_count": 7,
+        "created_at": "2026-10-11T18:05:00+02:00"
+      }
+    ]
+  }
+}
+```
+
+**Notes:**
+- Order is the `idx_episode_archive_order` contract: `year DESC, iso_week DESC, id DESC` — newest episode first, stable within a week.
+- `week_label` is `""` for episodes finalised before M10 landed; consumers fall back to `Week {iso_week}` for display.
+- `item_count` counts primaries only (secondaries excluded), matching the number of stories in the list view.
+- An empty archive returns `"episodes": []` (success, not an error).
+
+---
+
+### 5.21 Action: `get_archived_episode` (read, M11)
+
+**Description:** Returns one finished episode in full: the archive row, the decoded item snapshot (primary + secondaries, in stored order), and the archived show-notes Markdown. Reads only.
+
+**Request:** `GET /api.php?action=get_archived_episode&id={N}`
+
+**Validation:**
+- `id`: required, positive integer (else `400`)
+- No archive row with that id → `404`
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "episode": {
+      "id": 3,
+      "iso_week": 40,
+      "year": 2026,
+      "week_label": "",
+      "youtube_url": "https://www.youtube.com/watch?v=…",
+      "item_count": 7,
+      "created_at": "2026-10-11T18:05:00+02:00"
+    },
+    "items": [
+      { "id": 11, "section": "news", "url": "…", "title": "…", "author_name": "…",
+        "author_url": "…", "my_context": "…", "parent_id": null },
+      { "id": 12, "section": "news", "url": "…", "title": "…", "author_name": "",
+        "author_url": "", "my_context": "", "parent_id": 11 }
+    ],
+    "markdown": "# Cozy News Corner for Week 40 of 2026 …"
+  }
+}
+```
+
+**Notes:**
+- `items` is `JSON_DECODE(items_json)` verbatim — the lossless M9 snapshot (flat, primaries interleaved with their secondaries as `fetchNewsItemsOrdered` stored them: `parent_id` non-null marks a secondary).
+- `markdown` is the rendered show notes exactly as finalised (may be `""` if the render failed at finalise time — the structure in `items` still stands in).
+- This endpoint and `get_episode` (§5.10) are sibling reads of different tables: the former is the finished episode, the latter the live working episode. M11 deliberately names the archive form `get_archived_episode` so the two can never be confused.
 
 ---
 

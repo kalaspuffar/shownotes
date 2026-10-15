@@ -207,6 +207,12 @@ Currently, the user spends significant time manually visiting each browser tab, 
 - The user can clear the current episode and start fresh
 - A confirmation prompt is required before data is deleted
 
+#### UC-10: Browse Past Episodes (M11)
+
+- The user opens the "Past episodes" page and sees every finished episode, newest first (week, story count, YouTube link, archive date)
+- Clicking an episode shows its full past show notes: every story with title, link, attribution and research context (sub-articles listed under their story), plus the WordPress-ready Markdown source with a copy button
+- Episodes before any archive exists: the page shows a clear "no past episodes yet" state — nothing is fabricated
+
 ### 7.2 Features and Capabilities
 
 #### F-01: Episode Header Generation *(Must-have)*
@@ -283,6 +289,14 @@ Currently, the user spends significant time manually visiting each browser tab, 
 - The covered set is **URL-based and authoritative** — it works whether the story was promoted from the candidate pool or added directly to the episode
 - Coverage records **which episode first covered** the article (for traceability) and is **restorable**: a covered story can be uncovered and re-aimed in a future episode (surfaced in the browse UI — M11)
 - Every finished episode is **preserved** (its rendered show notes / Markdown + the full article list, primary and sub-articles) so past episodes can be reviewed (browse UI — M11)
+
+---
+
+#### F-13: Past-episode browse UI *(Must-have, M11)*
+- A **list of finished episodes** (newest first) reachable from the prep view, each with its week, story count, YouTube link and archive date — reading the M9 archive, never the live episode
+- A **per-episode show-notes view**: the full story list from the lossless snapshot (primary + sub-articles, attribution and research context preserved) and the archived Markdown source, copyable for pasting back into the blog
+- Read-only: browsing must never mutate the archive, the covered set, or the live episode
+- Renders correctly with **zero** archived episodes (friendly empty state, no error)
 
 ---
 

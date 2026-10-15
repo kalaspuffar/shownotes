@@ -42,6 +42,7 @@ $epYoutube        = htmlspecialchars($state['episode']['youtube_url'] ?? '', ENT
 
 <header id="app-top">
     <h1><?= $pageTitle ?></h1>
+    <a class="nav-past" href="episodes.php">Past episodes</a>
     <span id="status-indicator" aria-live="polite" aria-label="Save status"></span>
     <section id="episode-meta" aria-label="Episode metadata">
         <div class="episode-meta-fields">

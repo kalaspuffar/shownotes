@@ -61,7 +61,8 @@ if ($expectedToken !== '' && !hash_equals(
 // Read-only actions. GET-only, parameters from the query string. No
 // mutations and no scraper — a GET request must never leave the database
 // read path, which keeps reads uniformly cheap and side-effect free.
-$READ_ACTIONS = ['get_episode', 'list_items', 'list_candidates', 'list_selected_candidates'];
+$READ_ACTIONS = ['get_episode', 'list_items', 'list_candidates', 'list_selected_candidates',
+                 'list_episodes', 'get_archived_episode'];
 
 // Action handlers (jsonError/jsonSuccess + the handle*() functions) live in
 // api_handlers.php, kept out of this entry point so it stays short. They
@@ -88,6 +89,9 @@ if ($method === 'GET') {
             'list_items'      => handleListItems($db),
             'list_candidates' => handleListCandidates($db),
             'list_selected_candidates' => handleSelectedCandidates($db),
+            // M11 — finished-episode archive (reads the M9 episode_archive).
+            'list_episodes'          => handleListEpisodes($db),
+            'get_archived_episode'   => handleGetArchivedEpisode($db),
         };
     } catch (\Throwable $e) {
         http_response_code(500);

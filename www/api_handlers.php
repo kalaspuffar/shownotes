@@ -962,3 +962,66 @@ function extractDomain(string $url): string
 {
     return Scraper::extractDomain($url);
 }
+
+// -------------------------------------------------------------------------
+// M11 — finished-episode archive reads (foundation: the M9 episode_archive)
+// -------------------------------------------------------------------------
+
+/**
+ * GET list_episodes
+ *
+ * Returns the finished-episode archive, newest first (the idx_episode_archive_order
+ * contract). Read-only — powers www/episodes.php and automation alike.
+ */
+function handleListEpisodes(Database $db): array
+{
+    return jsonSuccess(['episodes' => $db->getEpisodesArchive()]);
+}
+
+/**
+ * GET get_archived_episode&id={N}
+ *
+ * Returns one finished episode in full: the archive row, the decoded item
+ * snapshot (lossless, primaries interleaved with their secondaries) and the
+ * archived show-notes Markdown. Named *archived* on purpose so it can never
+ * be confused with the live-episode read in get_episode (§5.10).
+ */
+function handleGetArchivedEpisode(Database $db): array
+{
+    $rawId = (string) ($_GET['id'] ?? '');
+
+    if ($rawId === '' || !preg_match('/^[0-9]{1,9}$/', $rawId) || (int) $rawId < 1) {
+        return jsonError('id must be a positive integer (the episode archive id)');
+    }
+
+    $row = $db->getEpisodeArchiveById((int) $rawId);
+
+    if ($row === null) {
+        return jsonError('No archived episode with id ' . (int) $rawId, 404);
+    }
+
+    $items = json_decode((string) ($row['items_json'] ?? '[]'), true);
+    if (!is_array($items)) {
+        // A corrupt snapshot must never 500 the page — the markdown column
+        // still carries the rendered notes, so degrade to an empty list.
+        $items = [];
+    }
+
+    // Trim the row to what callers actually use (drop the two payload blobs
+    // from the episode object; they travel under their own keys below).
+    $episode = [
+        'id'           => (int) $row['id'],
+        'iso_week'     => (int) $row['iso_week'],
+        'year'         => (int) $row['year'],
+        'week_label'   => (string) $row['week_label'],
+        'youtube_url'  => (string) $row['youtube_url'],
+        'item_count'   => (int) $row['item_count'],
+        'created_at'   => (string) $row['created_at'],
+    ];
+
+    return jsonSuccess([
+        'episode'  => $episode,
+        'items'    => $items,
+        'markdown' => (string) ($row['markdown'] ?? ''),
+    ]);
+}
