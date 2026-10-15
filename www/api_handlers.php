@@ -660,14 +660,25 @@ function handleReorderItems(array $body, Database $db): array
     return jsonSuccess(['section' => $section, 'order' => $orderedIds]);
 }
 
-function handleResetEpisode(Database $db): array
+function handleResetEpisode(Database $db, array $config): array
 {
-    $episode    = $db->resetEpisode();
-    $items      = $db->getItems();
+    // M9 — "New Episode" now finalises the recorded episode: render the show
+    // notes from the current items (the Generator is pure, so a failed render
+    // just leaves an empty markdown field), then archive + reset in one
+    // transaction. Covered stories are no longer re-offered afterwards.
+    $ep       = $db->getEpisode();
+    $items    = $db->getItemsFlat();
+    $markdown = '';
+    try {
+        $markdown = (new MarkdownGenerator())->generate($ep, $items, $config);
+    } catch (\Throwable $e) {
+        $markdown = '';
+    }
+
+    $episode    = $db->archiveAndResetEpisode($markdown);
+    $items      = $db->getItemsFlat();
     $candidates = $db->getCandidates('pending');
 
-    // M3: reset returns promoted candidates to the pool — the UI re-renders
-    // the pool from this response so re-offered stories reappear.
     return jsonSuccess(['episode' => $episode, 'items' => $items, 'candidates' => $candidates]);
 }
 
