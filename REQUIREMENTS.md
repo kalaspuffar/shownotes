@@ -252,9 +252,9 @@ Currently, the user spends significant time manually visiting each browser tab, 
 
 #### F-08: SQLite Persistence *(Must-have)*
 - Current episode state is saved automatically to a local SQLite database file
-- Only one episode is stored at a time
+- The episode in progress is stored as one live record; **finished episodes are preserved in a separate archive (M9)** rather than deleted
 - State persists across browser sessions and page refreshes
-- "New Episode" action clears and resets the database record
+- "New Episode" **archives** the recorded episode — its show notes and every article URL it covered — then clears and resets the live record (M9)
 
 #### F-09: Configuration File *(Must-have)*
 - Static/customisable values stored in `etc/config.php`
@@ -275,6 +275,14 @@ Currently, the user spends significant time manually visiting each browser tab, 
 - Selecting an author from the dropdown fills both the name and profile URL fields automatically
 - New author entries (manually typed and saved) are automatically added to the history for future reuse
 - The history grows passively — no separate author management UI is required
+
+---
+
+#### F-12: Covered-story tracking & episode archive *(Must-have, M9)*
+- A story's article URLs included in a finished episode are recorded in a **covered set** and must **never reappear as a candidate** in a later week — this fixes the case where covered stories re-emerged after "New Episode"
+- The covered set is **URL-based and authoritative** — it works whether the story was promoted from the candidate pool or added directly to the episode
+- Coverage records **which episode first covered** the article (for traceability) and is **restorable**: a covered story can be uncovered and re-aimed in a future episode (surfaced in the browse UI — M11)
+- Every finished episode is **preserved** (its rendered show notes / Markdown + the full article list, primary and sub-articles) so past episodes can be reviewed (browse UI — M11)
 
 ---
 

@@ -131,7 +131,7 @@ try {
         'update_item'            => handleUpdateItem($body, $db),
         'delete_item'            => handleDeleteItem($body, $db),
         'reorder_items'          => handleReorderItems($body, $db),
-        'reset_episode'          => handleResetEpisode($db),
+        'reset_episode'          => handleResetEpisode($db, $config),
         'get_author_suggestions' => handleGetAuthorSuggestions($body, $db),
         'generate_markdown'      => handleGenerateMarkdown($db, $config),
         'update_talking_points'  => handleUpdateTalkingPoints($body, $db),

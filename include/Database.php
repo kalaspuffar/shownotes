@@ -175,6 +175,49 @@ class Database
         $this->pdo->exec(<<<'SQL'
             CREATE INDEX IF NOT EXISTS idx_candidates_url ON candidates (url)
         SQL);
+
+        // M9 — episode archive: one row per FINALISED episode, created by
+        // "New Episode" (archiveAndResetEpisode) AFTER a recording is done.
+        // Preserves the rendered show notes (markdown) plus a lossless
+        // snapshot of the items (items_json) so past episodes can be viewed
+        // later (M11) and never lost to the reset.
+        $this->pdo->exec(<<<'SQL'
+            CREATE TABLE IF NOT EXISTS episode_archive (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                iso_week     INTEGER NOT NULL,
+                year         INTEGER NOT NULL,
+                week_label   TEXT    NOT NULL DEFAULT '',
+                youtube_url  TEXT    NOT NULL DEFAULT '',
+                item_count   INTEGER NOT NULL DEFAULT 0,
+                items_json   TEXT    NOT NULL DEFAULT '',
+                markdown     TEXT    NOT NULL DEFAULT '',
+                created_at   TEXT    NOT NULL
+            )
+        SQL);
+
+        $this->pdo->exec(<<<'SQL'
+            CREATE INDEX IF NOT EXISTS idx_episode_archive_order
+                ON episode_archive (year DESC, iso_week DESC, id DESC)
+        SQL);
+
+        // M9 — covered_articles: the authoritative "already reported" set,
+        // keyed by URL (the same key the candidate pool dedupes on).
+        // First coverage wins. A candidate in ANY status is hidden from the
+        // pending pool once its URL is here — that is the fix for the
+        // "covered stories come back after New Episode" bug.
+        $this->pdo->exec(<<<'SQL'
+            CREATE TABLE IF NOT EXISTS covered_articles (
+                url                      TEXT   PRIMARY KEY,
+                title                    TEXT   NOT NULL DEFAULT '',
+                first_covered_episode_id INTEGER,
+                covered_at               TEXT   NOT NULL
+            )
+        SQL);
+
+        $this->pdo->exec(<<<'SQL'
+            CREATE INDEX IF NOT EXISTS idx_covered_articles_episode
+                ON covered_articles (first_covered_episode_id)
+        SQL);
     }
 
     private function seedEpisode(): void
@@ -943,28 +986,94 @@ class Database
     }
 
     /**
-     * Deletes all items and resets the episode to the current week/year defaults.
+     * M9 — "New Episode" now finalises the recorded episode BEFORE wiping it.
+     *
+     * In one transaction it:
+     *   1. snapshots the current items into episode_archive
+     *      (item_count, items_json, and the pre-rendered show-notes markdown);
+     *   2. records every covered-article URL into covered_articles (the
+     *      archive row links each URL back to its first covering episode);
+     *   3. parks any now-covered candidate out of the active pool
+     *      (pending/selected → rejected) so it does not re-offer this cycle;
+     *   4. deletes the working items and resets the single episode row to
+     *      fresh defaults.
      *
      * Author history is intentionally preserved — it accumulates across episodes.
      *
-     * M3: candidates that were promoted (status 'selected') are flipped back to
-     * 'pending' — their target items were deleted, so the pool re-offers them.
-     * Rejected candidates stay rejected; a re-offer comes from a new push.
+     * This replaces the old resetEpisode(), whose `selected → pending` flip
+     * was the root cause of the "covered stories come back after New Episode"
+     * bug.
+     *
+     * @param string $markdown Pre-rendered show notes for this episode
+     *                          (empty string is fine — the structure is kept
+     *                          and the rendered Markdown is optional).
+     * @return array The fresh (post-reset) episode row.
      */
-    public function resetEpisode(): array
+    public function archiveAndResetEpisode(string $markdown = ''): array
     {
         $this->pdo->beginTransaction();
 
         try {
+            $episode = $this->getEpisode();
+            $grouped = $this->getItemsFlat();
+            $rows    = array_merge((array) $grouped['vulnerability'], (array) $grouped['news']);
+            $itemCount = count(array_filter($rows, fn($r) => empty($r['parent_id'])));
+
+            if ($rows !== []) {
+                $ins = $this->pdo->prepare(
+                    'INSERT INTO episode_archive (iso_week, year, week_label, youtube_url, item_count, items_json, markdown, created_at)
+                     VALUES (:w, :y, :wl, :yu, :ic, :ij, :md, :now)'
+                );
+                $ins->execute([
+                    ':w'    => (int) $episode['week_number'],
+                    ':y'    => (int) $episode['year'],
+                    ':wl'   => '',
+                    ':yu'   => (string) $episode['youtube_url'],
+                    ':ic'   => $itemCount,
+                    ':ij'   => json_encode($rows, JSON_UNESCAPED_SLASHES) ?: '[]',
+                    ':md'   => $markdown,
+                    ':now'  => date('c'),
+                ]);
+                $archived = (int) $this->pdo->lastInsertId();
+
+                // Cover every article URL in this episode (primary + secondary).
+                // INSERT OR IGNORE means first coverage wins: an article that
+                // reappears in a later episode keeps its original episode link.
+                $cov = $this->pdo->prepare(
+                    'INSERT OR IGNORE INTO covered_articles (url, title, first_covered_episode_id, covered_at)
+                     VALUES (:url, :title, :ep, :now)'
+                );
+                foreach ($rows as $r) {
+                    $url = trim((string) ($r['url'] ?? ''));
+                    if ($url === '') {
+                        continue;
+                    }
+                    $cov->execute([
+                        ':url'   => $url,
+                        ':title' => (string) ($r['title'] ?? ''),
+                        ':ep'    => $archived,
+                        ':now'   => date('c'),
+                    ]);
+                }
+            }
+
+            // Clear the working items.
             $this->pdo->exec('DELETE FROM items');
 
-            // M3 — return promoted candidates to the pending pool.
-            $this->pdo->exec("UPDATE candidates SET status = 'pending' WHERE status = 'selected'");
+            // M9 — covered candidates are parked out of the active pool so they
+            //   cannot re-offer this cycle (belt on top of the URL gate in
+            //   getCandidates). Rejected is the existing non-pending status and
+            //   keeps the pool / selected lists clean for the new episode.
+            $this->pdo->exec(
+                "UPDATE candidates SET status = 'rejected'
+                 WHERE url IN (SELECT url FROM covered_articles) AND status IN ('pending', 'selected')"
+            );
 
-            $stmt = $this->pdo->prepare(
+            // Reset the single running episode row to fresh defaults.
+            $upd = $this->pdo->prepare(
                 "UPDATE episodes SET week_number = :week, year = :year, youtube_url = '' WHERE id = 1"
             );
-            $stmt->execute([':week' => idate('W'), ':year' => (int) date('Y')]);
+            $upd->execute([':week' => idate('W'), ':year' => (int) date('Y')]);
 
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -973,6 +1082,63 @@ class Database
         }
 
         return $this->getEpisode();
+    }
+
+    // -------------------------------------------------------------------------
+    // M9 — archive reads + covered queries (foundation for the M11 browse UI)
+    // -------------------------------------------------------------------------
+
+    /** Returns archived episodes, newest first (browse list). */
+    public function getEpisodesArchive(): array
+    {
+        return $this->pdo
+            ->query('SELECT id, iso_week, year, week_label, youtube_url, item_count, created_at
+                     FROM episode_archive
+                     ORDER BY year DESC, iso_week DESC, id DESC')
+            ->fetchAll();
+    }
+
+    /** Returns one archived episode (full row incl. items_json + markdown). */
+    public function getEpisodeArchiveById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM episode_archive WHERE id = :id');
+        $stmt->execute([':id' => $id]);
+        $row = $stmt->fetch();
+
+        return $row === false ? null : $row;
+    }
+
+    /** Returns every covered article, oldest first. */
+    public function getCoveredArticles(): array
+    {
+        return $this->pdo
+            ->query('SELECT * FROM covered_articles ORDER BY covered_at ASC, url ASC')
+            ->fetchAll();
+    }
+
+    /** True when this URL is already in the covered set. */
+    public function isCoveredUrl(string $url): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM covered_articles WHERE url = :url LIMIT 1');
+        $stmt->execute([':url' => $url]);
+
+        return (bool) $stmt->fetch();
+    }
+
+    /**
+     * Restorable path — remove URLs from covered_articles (e.g. to re-air a
+     * story). Returns the number of rows removed. Safe to pass an empty list.
+     */
+    public function clearCoveredUrls(array $urls): int
+    {
+        if ($urls === []) {
+            return 0;
+        }
+        $ph  = implode(',', array_fill(0, count($urls), '?'));
+        $del = $this->pdo->prepare("DELETE FROM covered_articles WHERE url IN ($ph)");
+        $del->execute(array_values($urls));
+
+        return $del->rowCount();
     }
 
     /** Inserts a new author history record or increments use_count and updates last_used_at. */
@@ -1123,12 +1289,26 @@ class Database
         return $this->getCandidateByUrl($url);
     }
 
-    /** Returns all candidate rows for a status ('pending', 'selected', 'rejected'). */
+    /**
+     * Returns all candidate rows for a status ('pending', 'selected', 'rejected').
+     *
+     * M9 — for 'pending' we additionally exclude any candidate whose URL is in
+     * covered_articles. The covered set is URL-based and authoritative, so a
+     * story Daniel has already reported never re-enters the pool regardless of
+     * how it got to the candidates table (select_candidate or a direct add).
+     * Other statuses pass through unchanged.
+     */
     public function getCandidates(string $status = 'pending'): array
     {
-        $stmt = $this->pdo->prepare(
-            'SELECT * FROM candidates WHERE status = :status ORDER BY pushed_at ASC, id ASC'
-        );
+        if ($status === 'pending') {
+            $sql = 'SELECT c.* FROM candidates c '
+                 . 'WHERE c.status = :status AND c.url NOT IN (SELECT url FROM covered_articles) '
+                 . 'ORDER BY c.pushed_at ASC, c.id ASC';
+        } else {
+            $sql = 'SELECT * FROM candidates WHERE status = :status ORDER BY pushed_at ASC, id ASC';
+        }
+
+        $stmt = $this->pdo->prepare($sql);
         $stmt->execute([':status' => $status]);
 
         return $stmt->fetchAll();

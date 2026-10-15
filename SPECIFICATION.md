@@ -1,6 +1,6 @@
 # Project Specification: Cozy News Corner — Show Notes Generator
 
-**Version:** 1.0
+**Version:** 1.1 (M9 — episode archive & covered tracking)
 **Date:** 2026-02-21
 **Author:** Solution Architect (Claude Code)
 **Status:** Draft — Pending Review
@@ -177,7 +177,12 @@ return [
 | `updateItem` | `updateItem(int $id, string $url, string $title, string $authorName, string $authorUrl): array` | `array` | Update item fields; returns updated row |
 | `deleteItem` | `deleteItem(int $id): bool` | `bool` | Delete item; resequences `sort_order` within its section |
 | `reorderItems` | `reorderItems(string $section, array $orderedIds): bool` | `bool` | Set `sort_order` to array index for each id |
-| `resetEpisode` | `resetEpisode(): array` | `array` | Delete all items; reset episode to current week/year defaults; return new episode row |
+| `resetEpisode` → **`archiveAndResetEpisode`** (M9) | `archiveAndResetEpisode(string $markdown = ''): array` | `array` | Snapshot items + rendered show notes → `episode_archive`; record every article URL → `covered_articles` (linked to the archive row); park covered candidates to `rejected`; then delete items and reset the episode row; return the new episode row. |
+| `getEpisodesArchive` (M9) | `getEpisodesArchive(): array` | `array` | Archived episodes, newest first (browse list for M11). |
+| `getEpisodeArchiveById` (M9) | `getEpisodeArchiveById(int $id): ?array` | `array\|null` | One archived episode including `items_json` + `markdown`. |
+| `getCoveredArticles` (M9) | `getCoveredArticles(): array` | `array` | All covered-article URLs, oldest first. |
+| `isCoveredUrl` (M9) | `isCoveredUrl(string $url): bool` | `bool` | URL membership check against `covered_articles`. |
+| `clearCoveredUrls` (M9) | `clearCoveredUrls(array $urls): int` | `int` | Remove URLs from the covered set (restorable path; returns rows deleted). |
 | `upsertAuthorHistory` | `upsertAuthorHistory(string $domain, string $authorName, string $authorUrl): void` | `void` | Insert or increment `use_count` and update `last_used_at` |
 | `getAuthorSuggestions` | `getAuthorSuggestions(string $domain, string $query): array` | `['domain'=>[], 'other'=>[]]` | Domain-specific authors first, then others; both filtered by `$query` if non-empty |
 
@@ -748,6 +753,38 @@ CREATE TABLE IF NOT EXISTS candidates (
     UNIQUE (url)
 );
 CREATE INDEX IF NOT EXISTS idx_candidates_url ON candidates (url);
+
+-- M9 (new) — one row per FINALISED episode, created by "New Episode"
+-- (archiveAndResetEpisode) BEFORE the items are wiped. Preserves the rendered
+-- show notes (markdown) and a lossless items snapshot (items_json) so past
+-- episodes survive the reset and can be viewed later (M11).
+CREATE TABLE IF NOT EXISTS episode_archive (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    iso_week    INTEGER NOT NULL,
+    year        INTEGER NOT NULL,
+    week_label  TEXT    NOT NULL DEFAULT '',
+    youtube_url TEXT    NOT NULL DEFAULT '',
+    item_count  INTEGER NOT NULL DEFAULT 0,
+    items_json  TEXT    NOT NULL DEFAULT '',
+    markdown    TEXT    NOT NULL DEFAULT '',
+    created_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_episode_archive_order
+    ON episode_archive (year DESC, iso_week DESC, id DESC);
+
+-- M9 (new) — the authoritative "already reported" set, keyed by URL (the same
+-- key the candidate pool dedupes on). Recorded on every New Episode; first
+-- coverage wins. A candidate in ANY status is hidden from the pending pool
+-- once its URL is here — that is the fix for the "covered stories come back
+-- after New Episode" bug.
+CREATE TABLE IF NOT EXISTS covered_articles (
+    url                      TEXT   PRIMARY KEY,
+    title                    TEXT   NOT NULL DEFAULT '',
+    first_covered_episode_id INTEGER,
+    covered_at               TEXT   NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_covered_articles_episode
+    ON covered_articles (first_covered_episode_id);
 ```
 
 **Notes:**
@@ -981,7 +1018,7 @@ HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only 
 
 ### 5.7 Action: `reset_episode`
 
-**Description:** Deletes all items and resets the episode row to defaults (current ISO week and year, empty YouTube URL). Author history is **not** cleared.
+**Description:** (M9 change) "New Episode" now **finalises** the recorded episode before wiping it. The handler pre-renders the show notes via `MarkdownGenerator`, then calls `Database::archiveAndResetEpisode()`, which in one transaction: (1) snapshots the current items and the rendered Markdown into a new `episode_archive` row; (2) records every article URL in the new `covered_articles` table (first coverage wins; each URL links back to its first covering episode); (3) parks covered candidates (pending or selected) into `rejected` so they do not re-offer; (4) deletes all items and resets the single episode row to defaults. Author history is **not** cleared, so it accumulates across episodes. The `getCandidates('pending')` read path additionally filters out any URL in `covered_articles` (belt), so covered stories never re-enter the pool regardless of their status column.
 
 **Request:**
 ```json
@@ -1282,7 +1319,11 @@ GET /api.php?action=list_candidates
 
 ### 5.17 Action: `reset_episode` (write)
 
-**Description:** (Existing) Deletes all items and resets the episode metadata. M3: candidates in status `selected` are flipped back to `pending` (re-offered) — their target items were deleted. Rejected candidates stay rejected. The response now also carries the current `candidates` list so the UI can re-render the pool.
+**Description:** (M9) "New Episode" now **archives** the just-recorded episode *before* reset — the previous behaviour (`selected → pending` flip) is what caused covered stories to re-enter the pool on the next push. The new flow: the handler generates the show-notes Markdown from the current items and passes it to `archiveAndResetEpisode(string $markdown)`, which (a) inserts an `episode_archive` row (iso_week, year, week_label, youtube_url, item_count, items_json, markdown, created_at), (b) inserts one `covered_articles` row per distinct article URL (primary and secondary) in the finalised episode, (c) updates `candidates` so that now-covered rows (pending or selected) are parked to `rejected`, and (d) wipes `items` and resets the `episodes` row to defaults for the next cycle.
+
+Read path: `getCandidates('pending')` additionally excludes candidates whose URL is in `covered_articles`, so even a freshly re-pushed covered URL (inserted as `pending`) stays out of the visible pool.
+
+Restorable: `clearCoveredUrls([...])` removes a URL from `covered_articles` — the intended path for re-airing a previously-covered story (surfaced in the M11 browse UI).
 
 **Response (success):**
 ```json
