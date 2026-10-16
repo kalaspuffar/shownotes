@@ -1,6 +1,6 @@
 # Project Specification: Cozy News Corner — Show Notes Generator
 
-**Version:** 1.2 (M11 — browse old episodes + show-notes UI)
+**Version:** 1.3 (M10 — free-form week label, landing on M11's v1.2 base)
 **Date:** 2026-02-21
 **Author:** Solution Architect (Claude Code)
 **Status:** Draft — Pending Review
@@ -288,7 +288,9 @@ The domain is extracted with `parse_url($url, PHP_URL_HOST)`, stripping the `www
 **Generation Rules:**
 
 ```
-Line 1:   # {show_title} for Week {week_number} of {year} - {show_tagline}
+Line 1:   # {show_title} for {WEEK} of {year} - {show_tagline}
+          where WEEK = week_label (trimmed) when non-empty, else "Week {week_number}"
+          (M10 — free-form week label, e.g. "40-41" or "W40"; see M10 note below)
 Line 2:   (blank)
 Line 3:   [youtube {youtube_url}]
 Line 4:   (blank)
@@ -324,6 +326,11 @@ M6 — attribution rules:
 
 M7 — `hook` ("the open") is a PRESENTER/RESEARCH field only: it is never
   emitted in the generated Markdown. The generator must ignore it.
+
+M10 — `week_label`: when the episode carries a non-empty week_label the title
+  reads "… for {week_label} of {year}" (the label is emitted verbatim, never
+  reworded); otherwise the legacy "… for Week {week_number} of {year}". The
+  label is display-only; week_number remains the numeric sorting key.
 ```
 
 **Implementation Notes:**
@@ -357,6 +364,7 @@ M7 — `hook` ("the open") is a PRESENTER/RESEARCH field only: it is never
 {
   "episode": {
     "week_number": 8,
+    "week_label": null,
     "year": 2026,
     "youtube_url": ""
   },
@@ -652,12 +660,16 @@ Represents the single in-progress podcast episode. There is always exactly one r
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `id` | INTEGER | PRIMARY KEY | Always 1 |
-| `week_number` | INTEGER | NOT NULL | ISO 8601 week number (1–53) |
+| `week_number` | INTEGER | NOT NULL | ISO 8601 week number (1–53) — the numeric **sorting key**; also the fallback shown when no label is set |
+| `week_label` | TEXT | NULL, default NULL (M10) | Free-form display label (e.g. `"40–41"`, `"W40"`). Rendered verbatim; falls back to `Week {week_number}` when NULL/empty |
 | `year` | INTEGER | NOT NULL | Four-digit year |
 | `youtube_url` | TEXT | NOT NULL DEFAULT '' | Full YouTube watch URL |
 
 **Business rules:**
+- `week_label` (M10): a free-form display string Daniel controls verbatim (e.g. an episode spanning two ISO weeks). When non-empty it **replaces** `Week {week_number}` in the generated title, presenter intro and audience intro card. When NULL/empty the `Week {week_number}` fallback is used. The app does not reword or "fix" it.
+- `week_number` (M10): still required and NOT NULL so episodes stay sortable. When the user edits the label, the API best-effort re-derives it from the label's leading integer (clamped 1–53); if none parses it keeps the currently stored value. `week_label` is the display truth, `week_number` the sort truth.
 - `week_number` defaults to `idate('W')` on the date the episode row is initialised
+- `week_label` defaults to NULL on the same date (cleared by `reset_episode`)
 - `year` defaults to `date('Y')` on the same date
 - The episode row is created on first database initialisation and never deleted; `reset_episode` updates the fields rather than deleting and re-inserting
 
@@ -710,9 +722,13 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 -- Single-row episode table
+-- M10: week_label is a nullable, free-form display label (e.g. "40-41").
+--      week_number stays NOT NULL as the numeric sorting key + fallback.
+--      Existing databases gain the column via a guarded ALTER in initSchema().
 CREATE TABLE IF NOT EXISTS episodes (
     id          INTEGER PRIMARY KEY CHECK (id = 1),
     week_number INTEGER NOT NULL,
+    week_label  TEXT,
     year        INTEGER NOT NULL,
     youtube_url TEXT    NOT NULL DEFAULT ''
 );
@@ -828,29 +844,32 @@ HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only 
 
 ### 5.1 Action: `update_episode`
 
-**Description:** Updates the episode metadata (week number, year, YouTube URL).
+**Description:** Updates the episode metadata (week label, ISO week, year, YouTube URL). M10: the **display** week field is now the free-form `week_label` (e.g. `"40–41"` or `"W40"`); `week_number` is kept as the numeric sorting key and is best-effort derived from the label when not sent.
 
 **Request:**
 ```json
 {
   "action": "update_episode",
-  "week_number": 8,
+  "week_label": "40–41",
+  "week_number": 40,
   "year": 2026,
   "youtube_url": "https://www.youtube.com/watch?v=JjXNspLI2XU"
 }
 ```
+(`week_number` is optional as of M10 — omit it and the server derives it from `week_label` or keeps the current value.)
 
 **Validation:**
-- `week_number`: integer, 1–53
-- `year`: integer, 4 digits (≥ 2020)
-- `youtube_url`: string, may be empty
+- `week_label` (M10): optional string. Trimmed; empty string → stored as NULL. Max 64 characters (longer → 400). Stored and rendered verbatim.
+- `week_number` (M10): optional integer, 1–53. When omitted, the server best-effort derives it from `week_label`'s leading integer (clamped to 1–53); if none parses it keeps the currently stored `week_number` — so the row always remains sortable.
+- `year`: integer, 4 digits (≥ 2020) — **required**
+- `youtube_url`: string, may be empty — **required**
 
 **Response (success):**
 ```json
 {
   "success": true,
   "data": {
-    "episode": { "id": 1, "week_number": 8, "year": 2026, "youtube_url": "https://..." }
+    "episode": { "id": 1, "week_number": 40, "week_label": "40–41", "year": 2026, "youtube_url": "https://..." }
   }
 }
 ```
@@ -1042,7 +1061,7 @@ HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only 
 
 ### 5.7 Action: `reset_episode`
 
-**Description:** (M9 change) "New Episode" now **finalises** the recorded episode before wiping it. The handler pre-renders the show notes via `MarkdownGenerator`, then calls `Database::archiveAndResetEpisode()`, which in one transaction: (1) snapshots the current items and the rendered Markdown into a new `episode_archive` row; (2) records every article URL in the new `covered_articles` table (first coverage wins; each URL links back to its first covering episode); (3) parks covered candidates (pending or selected) into `rejected` so they do not re-offer; (4) deletes all items and resets the single episode row to defaults. Author history is **not** cleared, so it accumulates across episodes. The `getCandidates('pending')` read path additionally filters out any URL in `covered_articles` (belt), so covered stories never re-enter the pool regardless of their status column.
+**Description:** (M9 change) "New Episode" now **finalises** the recorded episode before wiping it. The handler pre-renders the show notes via `MarkdownGenerator`, then calls `Database::archiveAndResetEpisode()`, which in one transaction: (1) snapshots the current items and the rendered Markdown into a new `episode_archive` row — including the episode's free-form `week_label` (M10), so past episodes browse with their "40–41"-style titles; (2) records every article URL in the new `covered_articles` table (first coverage wins; each URL links back to its first covering episode); (3) parks covered candidates (pending or selected) into `rejected` so they do not re-offer; (4) deletes all items and resets the single episode row to defaults — including clearing `week_label` (M10) so a fresh episode starts from the "Week N" fallback. Author history is **not** cleared, so it accumulates across episodes. The `getCandidates('pending')` read path additionally filters out any URL in `covered_articles` (belt), so covered stories never re-enter the pool regardless of their status column.
 
 **Request:**
 ```json
@@ -1056,7 +1075,7 @@ HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only 
 {
   "success": true,
   "data": {
-    "episode": { "id": 1, "week_number": 9, "year": 2026, "youtube_url": "" },
+    "episode": { "id": 1, "week_number": 9, "week_label": null, "year": 2026, "youtube_url": "" },
     "items": { "vulnerability": [], "news": [] }
   }
 }
@@ -1146,7 +1165,7 @@ GET /api.php?action=get_episode
 {
   "success": true,
   "data": {
-    "episode": { "id": 1, "week_number": 8, "year": 2026, "youtube_url": "https://..." }
+    "episode": { "id": 1, "week_number": 8, "week_label": null, "year": 2026, "youtube_url": "https://..." }
   }
 }
 ```
@@ -1554,7 +1573,8 @@ The `Scraper` class must prevent requests to private/internal network resources.
 ### 6.5 Input Validation
 
 - All API action payloads are validated for required fields and type correctness before processing
-- Integer fields (`week_number`, `year`, `id`) are cast and range-checked
+- Integer fields (`week_number`, `year`, `id`) are cast and range-checked; `week_number` is range-checked only when present (optional as of M10)
+- `week_label` (M10) is trimmed, capped at 64 characters, and stored/rendered verbatim (it is display-only; the generator does not HTML/Markdown-escape it any more than any other field value)
 - Enum fields (`section`) are checked against an allow-list
 
 ### 6.6 API Authentication (optional token gate)
@@ -1967,6 +1987,7 @@ Implementation is structured as five sequential feature branches. Each branch re
   "episode": {
     "id": 1,
     "week_number": 8,
+    "week_label": null,
     "year": 2026,
     "youtube_url": "https://www.youtube.com/watch?v=JjXNspLI2XU"
   },

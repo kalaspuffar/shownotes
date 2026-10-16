@@ -416,12 +416,29 @@ function handleSelectedCandidates(Database $db): array
 
 function handleUpdateEpisode(array $body, Database $db): array
 {
-    $week       = filter_var($body['week_number'] ?? null, FILTER_VALIDATE_INT);
+    // M10 — the primary week field is the free-form `week_label` (e.g. "40–41"
+    // or "W40"). `week_number` is kept as the numeric sorting key: validate it
+    // when sent; otherwise best-effort derive it from the label's leading
+    // digits (1–53); otherwise keep the currently stored value — so the row
+    // always remains sortable.
+    $weekLabel  = $body['week_label'] ?? null;
+    $weekNumber = $body['week_number'] ?? null;
     $year       = filter_var($body['year'] ?? null, FILTER_VALIDATE_INT);
     $youtubeUrl = $body['youtube_url'] ?? null;
 
-    if ($week === false || $week === null || $week < 1 || $week > 53) {
-        return jsonError('week_number must be an integer between 1 and 53');
+    if ($weekLabel !== null) {
+        $weekLabel = trim((string) $weekLabel);
+        if ($weekLabel === '') {
+            $weekLabel = null; // an explicit empty label clears it
+        } elseif (strlen($weekLabel) > 64) {
+            return jsonError('week_label must be 64 characters or fewer');
+        }
+    }
+    if ($weekNumber !== null) {
+        $weekNumber = filter_var($weekNumber, FILTER_VALIDATE_INT);
+        if ($weekNumber === false || $weekNumber === null || $weekNumber < 1 || $weekNumber > 53) {
+            return jsonError('week_number must be an integer between 1 and 53');
+        }
     }
     if ($year === false || $year === null || $year < 2020) {
         return jsonError('year must be an integer >= 2020');
@@ -430,7 +447,18 @@ function handleUpdateEpisode(array $body, Database $db): array
         return jsonError('youtube_url must be a string');
     }
 
-    $episode = $db->updateEpisode($week, $year, $youtubeUrl);
+    // Resolve the numeric sorting key.
+    if ($weekNumber === null && $weekLabel !== null && preg_match('/(\d+)/', $weekLabel, $m)) {
+        $weekNumber = (int) $m[1];
+        if ($weekNumber < 1 || $weekNumber > 53) {
+            $weekNumber = null;
+        }
+    }
+    if ($weekNumber === null) {
+        $weekNumber = (int) ($db->getEpisode()['week_number'] ?? idate('W'));
+    }
+
+    $episode = $db->updateEpisode($weekNumber, $year, $youtubeUrl, (string) ($weekLabel ?? ''));
 
     return jsonSuccess(['episode' => $episode]);
 }

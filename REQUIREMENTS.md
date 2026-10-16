@@ -95,7 +95,7 @@ Currently, the user spends significant time manually visiting each browser tab, 
 - URL metadata scraping (page title, author name, author profile URL)
 - Editable fields for all scraped metadata
 - Manual entry of YouTube embed URL
-- Auto-suggestion of current ISO week number (editable)
+- Auto-suggestion of current ISO week number (editable); free-form week label (e.g. "40–41", "W40") as of M10
 - Drag-and-drop reordering of items within each section
 - Add / Edit / Delete items within each section
 - Single-episode persistence via SQLite (one active episode at a time)
@@ -159,9 +159,11 @@ Currently, the user spends significant time manually visiting each browser tab, 
 #### UC-02: Set Episode Metadata
 
 - The user can view and edit:
-  - **Week number** (integer, auto-suggested as current ISO week)
+  - **Week label** (free-form text, e.g. "40–41" or "W40" — M10; the primary display field)
+  - **Week number** (integer, auto-suggested as current ISO week; retained as the numeric sorting key + fallback)
   - **Year** (integer, auto-suggested as current year)
   - **YouTube URL** (text field, manually entered after recording)
+- The week label is displayed verbatim in the generated title and the presenter/audience intro; when blank, the "Week {N}" form from the week number is used
 
 #### UC-03: Add a Link to a Section
 
@@ -217,6 +219,7 @@ Currently, the user spends significant time manually visiting each browser tab, 
 
 #### F-01: Episode Header Generation *(Must-have)*
 - Generates: `# Cozy News Corner for Week {N} of {YEAR} - Your source for Open Source news`
+- When a free-form **week label** is set (M10, e.g. "40–41" or "W40"), the header instead reads `# Cozy News Corner for {week_label} of {YEAR} - Your source for Open Source news` — the label is used verbatim
 - Week and year are drawn from the editable metadata fields
 
 #### F-02: YouTube Embed Generation *(Must-have)*
@@ -348,7 +351,8 @@ Currently, the user spends significant time manually visiting each browser tab, 
 #### Episode
 | Field | Type | Notes |
 |-------|------|-------|
-| `week_number` | Integer | ISO week number (1–53) |
+| `week_number` | Integer | ISO week number (1–53) — numeric sorting key + fallback display |
+| `week_label` | String (nullable) | Free-form week label (e.g. "40–41", "W40") — M10; displayed verbatim when set |
 | `year` | Integer | Four-digit year |
 | `youtube_url` | String | Full YouTube URL — always required before generating output |
 
