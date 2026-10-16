@@ -921,7 +921,7 @@ ul.author-suggest-list {
 
 /* Inline variant — compact for the list view */
 .talking-points-textarea {
-    min-height: 2.4em;
+    min-height: 7.2em;   /* M12: 3× the pre-M12 2.4em, so ~4–5 lines fit without resizing */
     max-height: 200px;
 }
 

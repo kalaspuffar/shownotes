@@ -2633,7 +2633,7 @@ const talkingPointsModule = (() => {
         textarea.dataset.itemId = item.id;
         textarea.setAttribute('aria-label', `Recording notes for item ${item.id}`);
         textarea.placeholder = 'One talking point per line...';
-        textarea.rows = 3;
+        textarea.rows = 8;  // M12: match the 7.2em min-height (~4–5 visible lines)
         textarea.spellcheck = true;
 
         // Populate from existing data — join lines with \n
