@@ -1,6 +1,6 @@
 # Project Specification: Cozy News Corner — Show Notes Generator
 
-**Version:** 1.3 (M10 — free-form week label, landing on M11's v1.2 base)
+**Version:** 1.4 (M12 — roomy per-article recording-notes field, landing on M10's v1.3 base)
 **Date:** 2026-02-21
 **Author:** Solution Architect (Claude Code)
 **Status:** Draft — Pending Review
@@ -622,6 +622,12 @@ Events bound on each section list container:
 - Focus indicators meet WCAG AA contrast requirements (4.5:1 minimum)
 - Drag handles are visually distinct and obviously interactive
 - The Markdown output area uses a monospace font and is easily readable
+
+**Recording-notes field sizing (M12):**
+- The inline per-article notes textarea (`.talking-points-textarea`) opens at `min-height: 7.2em` — triple the pre-M12 `2.4em` — so a note of ~4–5 lines fits without resizing. `max-height: 200px` and `resize: vertical` are unchanged; autosave (debounced input + blur) in `www/js/app.js` is unchanged.
+- The `rows` attribute on the inline textarea is raised 3 → 8 to match the larger min-height (it is the no/low-CSS fallback for the box's intrinsic size).
+- The Add-Article modal notes field (`#aim-talking-points`, `rows = 6`) is untouched: its `min-height: 8em` is already larger than the inline field's new starting size.
+- Pure presentation change: no schema, API, or state changes.
 
 ---
 

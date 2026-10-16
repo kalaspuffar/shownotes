@@ -303,6 +303,13 @@ Currently, the user spends significant time manually visiting each browser tab, 
 
 ---
 
+#### F-14: Roomy per-article recording-notes field *(Should-have, M12)*
+- The per-article recording-notes (talking-points) textarea in the prep list view starts at a height that fits ~4–5 written lines — triple the pre-M12 default that showed only ~1 line — since notes are written while the article is open and a 1-line box invites one-liners
+- The field stays user-resizable (`resize: vertical`) and the existing max-height/autosave behaviour is unchanged; only the starting size grows
+- The Add-Article modal's notes field must stay at least as large as the inline field (it already is: 8em ≥ 7.2em)
+
+---
+
 ## 8. Non-Functional Requirements
 
 ### 8.1 Performance
