@@ -1,6 +1,6 @@
 # Project Specification: Cozy News Corner — Show Notes Generator
 
-**Version:** 1.4 (M12 — roomy per-article recording-notes field, landing on M10's v1.3 base)
+**Version:** 1.5 (M12 — roomy per-article recording-notes field + week-label prefill follow-up, landing on M10's v1.3 base)
 **Date:** 2026-02-21
 **Author:** Solution Architect (Claude Code)
 **Status:** Draft — Pending Review
@@ -675,7 +675,7 @@ Represents the single in-progress podcast episode. There is always exactly one r
 - `week_label` (M10): a free-form display string Daniel controls verbatim (e.g. an episode spanning two ISO weeks). When non-empty it **replaces** `Week {week_number}` in the generated title, presenter intro and audience intro card. When NULL/empty the `Week {week_number}` fallback is used. The app does not reword or "fix" it.
 - `week_number` (M10): still required and NOT NULL so episodes stay sortable. When the user edits the label, the API best-effort re-derives it from the label's leading integer (clamped 1–53); if none parses it keeps the currently stored value. `week_label` is the display truth, `week_number` the sort truth.
 - `week_number` defaults to `idate('W')` on the date the episode row is initialised
-- `week_label` defaults to NULL on the same date (cleared by `reset_episode`)
+- `week_label` is **prefilled** with the current ISO week at the same date (e.g. `"42"`), and `reset_episode` **re-prefills** it with the ISO week of the reset date (post-M10 follow-up, Daniel 2026-10-16): a fresh episode shows the current week in the header field instead of an empty input, and Daniel edits it to a free form like `"40–41"` only when the episode spans weeks. An explicit save of an empty label still stores NULL ("no label, Week N fallback") — only initialisation/reset prefill.
 - `year` defaults to `date('Y')` on the same date
 - The episode row is created on first database initialisation and never deleted; `reset_episode` updates the fields rather than deleting and re-inserting
 
@@ -1067,7 +1067,7 @@ HTTP status codes: 200 (success), 400 (bad request), 401 (unauthorised — only 
 
 ### 5.7 Action: `reset_episode`
 
-**Description:** (M9 change) "New Episode" now **finalises** the recorded episode before wiping it. The handler pre-renders the show notes via `MarkdownGenerator`, then calls `Database::archiveAndResetEpisode()`, which in one transaction: (1) snapshots the current items and the rendered Markdown into a new `episode_archive` row — including the episode's free-form `week_label` (M10), so past episodes browse with their "40–41"-style titles; (2) records every article URL in the new `covered_articles` table (first coverage wins; each URL links back to its first covering episode); (3) parks covered candidates (pending or selected) into `rejected` so they do not re-offer; (4) deletes all items and resets the single episode row to defaults — including clearing `week_label` (M10) so a fresh episode starts from the "Week N" fallback. Author history is **not** cleared, so it accumulates across episodes. The `getCandidates('pending')` read path additionally filters out any URL in `covered_articles` (belt), so covered stories never re-enter the pool regardless of their status column.
+**Description:** (M9 change) "New Episode" now **finalises** the recorded episode before wiping it. The handler pre-renders the show notes via `MarkdownGenerator`, then calls `Database::archiveAndResetEpisode()`, which in one transaction: (1) snapshots the current items and the rendered Markdown into a new `episode_archive` row — including the episode's free-form `week_label` (M10), so past episodes browse with their "40–41"-style titles; (2) records every article URL in the new `covered_articles` table (first coverage wins; each URL links back to its first covering episode); (3) parks covered candidates (pending or selected) into `rejected` so they do not re-offer; (4) deletes all items and resets the single episode row to defaults — re-prefilling `week_label` (M10 + follow-up) with the current ISO week (e.g. `"42"`) so a fresh episode has the week in the header field from the start and Daniel only edits it for multi-week episodes. Author history is **not** cleared, so it accumulates across episodes. The `getCandidates('pending')` read path additionally filters out any URL in `covered_articles` (belt), so covered stories never re-enter the pool regardless of their status column.
 
 **Request:**
 ```json

@@ -244,14 +244,18 @@ class Database
             $this->pdo->exec("ALTER TABLE candidates ADD COLUMN selected_item_id INTEGER");
         }
 
-        // INSERT OR IGNORE is a no-op when the row already exists.
+        // INSERT OR IGNORE is a no-op when the row already exists. The week
+        // label is prefilled with the current ISO week (post-M10 follow-up)
+        // so a brand-new DB shows the current week in the header instead of
+        // an empty field.
         $stmt = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO episodes (id, week_number, year, youtube_url)
-             VALUES (1, :week, :year, \'\')'
+            'INSERT OR IGNORE INTO episodes (id, week_number, week_label, year, youtube_url)
+             VALUES (1, :week, :label, :year, \'\')'
         );
         $stmt->execute([
-            ':week' => idate('W'),
-            ':year' => (int) date('Y'),
+            ':week'  => idate('W'),
+            ':label' => (string) idate('W'),
+            ':year'  => (int) date('Y'),
         ]);
     }
 
@@ -268,7 +272,7 @@ class Database
         return $stmt->fetch() ?: [
             'id'          => 1,
             'week_number' => idate('W'),
-            'week_label'  => null,
+            'week_label'  => (string) idate('W'),
             'year'        => (int) date('Y'),
             'youtube_url' => '',
         ];
@@ -1098,14 +1102,17 @@ class Database
                  WHERE url IN (SELECT url FROM covered_articles) AND status IN ('pending', 'selected')"
             );
 
-            // M10 — also clear the free-form week label so a fresh episode
-            // starts from the numeric "Week N" fallback (does not inherit the
-            // previous episode's label). M9 — after the snapshot above has
-            // already captured it (see the archive INSERT).
+            // M10 — don't inherit the previous episode's label. Instead of
+            // leaving the field blank, PREFILL it with the current ISO week
+            // (post-M10 follow-up, Daniel 2026-10-16): a fresh episode shows
+            // e.g. "42" in the header from the start, and Daniel edits it to
+            // a free form like "40-41" only when the episode spans weeks.
+            // M9 — after the snapshot above has already captured the old label
+            // (see the archive INSERT).
             $upd = $this->pdo->prepare(
-                "UPDATE episodes SET week_number = :week, week_label = NULL, year = :year, youtube_url = '' WHERE id = 1"
+                "UPDATE episodes SET week_number = :week, week_label = :label, year = :year, youtube_url = '' WHERE id = 1"
             );
-            $upd->execute([':week' => idate('W'), ':year' => (int) date('Y')]);
+            $upd->execute([':week' => idate('W'), ':label' => (string) idate('W'), ':year' => (int) date('Y')]);
 
             $this->pdo->commit();
         } catch (\Throwable $e) {
