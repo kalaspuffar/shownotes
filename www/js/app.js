@@ -2388,37 +2388,43 @@ const storyGroupModule = (() => {
     function renderGroupContainer(primary, secondaries) {
         const groupDiv = document.createElement('div');
         groupDiv.className = 'story-group';
-        groupDiv.draggable = true;
         groupDiv.dataset.primaryId = primary.id;
+        // The group box is NOT itself draggable. Only the dedicated group
+        // handle below starts a drag — exactly the same contract as a
+        // standalone item row (see renderItem). This is what lets you click
+        // anywhere else in the box (the primary's title, the recording-notes
+        // "bullets", the sub-articles) and drag to select text without
+        // accidentally kicking off a whole-group reorder.
 
-        // Group-level drag events — move the whole group as a unit
-        groupDiv.addEventListener('dragstart', (e) => {
-            // If the event originates from any element inside an .item-row, let the
-            // item-row's own drag handle take over. Without this broad guard, dragging
-            // a secondary item's text content would bubble up and overwrite dataTransfer
-            // with the primary's ID (DnD bubbling hazard).
-            if (e.target !== groupDiv && e.target.closest('.item-row')) return;
+        // Group drag handle — the ONLY way to move the whole story. It is
+        // draggable itself and owns dragstart/dragend (previously the whole
+        // groupDiv was draggable, so selecting text on the primary's notes or
+        // other non-row content would fire a group drag). setDragImage forces
+        // the browser to use the full group as the ghost, as before.
+        const handle = document.createElement('span');
+        handle.className = 'story-group__drag-handle';
+        handle.textContent = '⠿';
+        handle.setAttribute('aria-hidden', 'true');
+        handle.title = 'Drag to move this story';
+        handle.draggable = true;
+        groupDiv.appendChild(handle);
+
+        handle.addEventListener('dragstart', (e) => {
             dragSourceSection  = 'news';
             dragSourceParentId = null; // whole-group drag is a top-level operation
             e.dataTransfer.setData('text/plain', String(primary.id));
             e.dataTransfer.effectAllowed = 'move';
             const rect = groupDiv.getBoundingClientRect();
             e.dataTransfer.setDragImage(groupDiv, e.clientX - rect.left, e.clientY - rect.top);
+            // Defer the class add by one animation frame so Chrome captures the
+            // full-group ghost before the .dragging opacity reduction kicks in.
             requestAnimationFrame(() => groupDiv.classList.add('dragging'));
         });
-
-        groupDiv.addEventListener('dragend', () => {
+        handle.addEventListener('dragend', () => {
             groupDiv.classList.remove('dragging');
             dragSourceSection  = null;
             dragSourceParentId = null;
         });
-
-        // Visual group drag handle (not draggable itself — drag propagates to container)
-        const handle = document.createElement('span');
-        handle.className = 'story-group__drag-handle';
-        handle.textContent = '⠿';
-        handle.setAttribute('aria-hidden', 'true');
-        groupDiv.appendChild(handle);
 
         // Primary item row with badge
         const primaryWrapper = document.createElement('div');
